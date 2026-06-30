@@ -1,0 +1,229 @@
+// OpenNPC Migration Platform — data model.
+// Mirrors docs/06-database-schema.md. pg-boss manages its own `pgboss` schema separately.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum OrgRole {
+  source
+  target
+}
+
+enum Stage {
+  analyze
+  extract
+  transform
+  load
+  validate
+}
+
+enum StageStatus {
+  NOT_STARTED
+  QUEUED
+  RUNNING
+  AWAITING_REVIEW
+  APPROVED
+  DONE
+  FAILED
+}
+
+enum ObjectStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  PARTIAL
+  FAILED
+}
+
+enum LoadStatus {
+  pending
+  loaded
+  error
+}
+
+/// Top-level container for one NPSP -> NPC migration.
+model MigrationProject {
+  id        String   @id @default(uuid())
+  name      String
+  scope     Json     @default("{}") // { core, relationships, programs, campaigns }
+  status    String   @default("active") // active | completed | archived
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  connections OrgConnection[]
+  stageRuns   StageRun[]
+  mappings    MappingDefinition[]
+  source      StagingSource[]
+  target      StagingTarget[]
+  idXrefs     IdXref[]
+  errors      MigrationError[]
+
+  @@map("migration_project")
+}
+
+/// A connected Salesforce org (one source, one target per project). Tokens encrypted at rest.
+model OrgConnection {
+  id              String   @id @default(uuid())
+  projectId       String
+  role            OrgRole
+  instanceUrl     String
+  orgId           String?
+  apiVersion      String?
+  accessTokenEnc  Bytes?
+  refreshTokenEnc Bytes?
+  tokenMeta       Json     @default("{}")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  project MigrationProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, role])
+  @@map("org_connection")
+}
+
+/// One row per stage per project (history kept via `attempt`).
+model StageRun {
+  id         String      @id @default(uuid())
+  projectId  String
+  stage      Stage
+  status     StageStatus @default(NOT_STARTED)
+  attempt    Int         @default(1)
+  stats      Json        @default("{}")
+  error      String?
+  approvedBy String?
+  approvedAt DateTime?
+  startedAt  DateTime?
+  finishedAt DateTime?
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+
+  project    MigrationProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  objectRuns ObjectRun[]
+
+  @@index([projectId, stage])
+  @@map("stage_run")
+}
+
+/// Per-object granularity within a stage — enables isolated re-runs.
+model ObjectRun {
+  id             String       @id @default(uuid())
+  stageRunId     String
+  objectApiName  String
+  status         ObjectStatus @default(PENDING)
+  processedCount Int          @default(0)
+  failedCount    Int          @default(0)
+  bulkJobId      String?
+  checkpoint     Json         @default("{}")
+  startedAt      DateTime?
+  finishedAt     DateTime?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  stageRun StageRun         @relation(fields: [stageRunId], references: [id], onDelete: Cascade)
+  errors   MigrationError[]
+
+  @@index([stageRunId])
+  @@map("object_run")
+}
+
+/// Editable NPSP -> NPC mapping; auto-draft is version 1.
+model MappingDefinition {
+  id         String   @id @default(uuid())
+  projectId  String
+  object     String
+  fieldMap   Json     @default("{}")
+  valueMap   Json     @default("{}")
+  options    Json     @default("{}")
+  version    Int      @default(1)
+  approvedBy String?
+  approvedAt DateTime?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  project MigrationProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, object, version])
+  @@map("mapping_definition")
+}
+
+/// Raw extracted source records (Stage 2 output).
+model StagingSource {
+  id           BigInt   @id @default(autoincrement())
+  projectId    String
+  object       String
+  sourceId     String
+  raw          Json
+  extractRunId String?
+  createdAt    DateTime @default(now())
+
+  project MigrationProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, object])
+  @@index([projectId, sourceId])
+  @@map("staging_source")
+}
+
+/// Transformed, NPC-shaped records ready to load (Stage 3 output).
+model StagingTarget {
+  id           BigInt     @id @default(autoincrement())
+  projectId    String
+  targetObject String
+  transformed  Json
+  sourceRef    String
+  loadStatus   LoadStatus @default(pending)
+  targetId     String?
+  error        String?
+  createdAt    DateTime   @default(now())
+
+  project MigrationProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, targetObject])
+  @@index([projectId, loadStatus])
+  @@map("staging_target")
+}
+
+/// The central ID cross-reference: source IDs -> new target IDs.
+model IdXref {
+  id           BigInt   @id @default(autoincrement())
+  projectId    String
+  sourceObject String
+  sourceId     String
+  targetObject String?
+  targetId     String?
+  legacyExtId  String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  project MigrationProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, sourceId])
+  @@index([projectId, sourceObject, sourceId])
+  @@map("id_xref")
+}
+
+/// Every per-record failure, retryable or not.
+model MigrationError {
+  id          BigInt   @id @default(autoincrement())
+  projectId   String
+  objectRunId String?
+  stage       String
+  object      String
+  sourceId    String?
+  message     String
+  payload     Json     @default("{}")
+  retryable   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  project   MigrationProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  objectRun ObjectRun?       @relation(fields: [objectRunId], references: [id], onDelete: SetNull)
+
+  @@index([projectId, object])
+  @@index([projectId, retryable])
+  @@map("migration_error")
+}

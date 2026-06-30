@@ -1,0 +1,13 @@
+node_modules
+**/node_modules
+.git
+.env
+.env.local
+dist
+build
+.next
+**/.next
+coverage
+*.log
+docs
+chatgpt_conversation.md

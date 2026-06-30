@@ -1,0 +1,34 @@
+{
+  "name": "npsp2npc",
+  "version": "0.1.0",
+  "private": true,
+  "description": "OpenNPC Migration Platform — migrate Salesforce NPSP into Nonprofit Cloud (NPC). See docs/.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "packageManager": "pnpm@9.12.0",
+  "scripts": {
+    "dev": "pnpm -r --parallel run dev",
+    "build": "pnpm -r run build",
+    "typecheck": "pnpm -r run typecheck",
+    "lint": "pnpm -r run lint",
+    "test": "pnpm -r run test",
+    "db:generate": "dotenv -e .env -- pnpm --filter @opennpc/db run generate",
+    "db:push": "dotenv -e .env -- pnpm --filter @opennpc/db run push",
+    "db:migrate": "dotenv -e .env -- pnpm --filter @opennpc/db run migrate",
+    "start:api": "dotenv -e .env -- pnpm --filter @opennpc/api run start",
+    "start:worker": "dotenv -e .env -- pnpm --filter @opennpc/worker run start",
+    "start:api_dev": "dotenv -e .env -- pnpm --filter @opennpc/api run dev",
+    "start:worker_dev": "dotenv -e .env -- pnpm --filter @opennpc/worker run dev",
+    "start:web_dev": "dotenv -e .env -- pnpm --filter @opennpc/web run dev",
+    "start:all_dev": "dotenv -e .env -- pnpm --filter @opennpc/api run dev --parallel --filter @opennpc/worker run dev --parallel --filter @opennpc/web run dev --parallel"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.0",
+    "dotenv-cli": "^11.0.0",
+    "tsx": "^4.19.1",
+    "typescript": "^5.6.2"
+  }
+}

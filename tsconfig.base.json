@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2022"],
+    "types": ["node"],
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "declaration": true,
+    "sourceMap": true,
+    "baseUrl": ".",
+    "paths": {
+      "@opennpc/db": ["packages/db/src/index.ts"],
+      "@opennpc/core": ["packages/core/src/index.ts"],
+      "@opennpc/salesforce": ["packages/salesforce/src/index.ts"],
+      "@opennpc/mapping": ["packages/mapping/src/index.ts"]
+    }
+  }
+}
