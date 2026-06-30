@@ -9,12 +9,14 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --test --import tsx ./src/**/*.test.ts"
   },
   "dependencies": {
     "jsforce": "^3.6.0"
   },
   "devDependencies": {
+    "tsx": "^4.19.1",
     "typescript": "^5.6.2"
   }
 }

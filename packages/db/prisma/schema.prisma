@@ -63,8 +63,24 @@ model MigrationProject {
   target      StagingTarget[]
   idXrefs     IdXref[]
   errors      MigrationError[]
+  oauthStates OAuthState[]
 
   @@map("migration_project")
+}
+
+/// Transient OAuth flow state (PKCE verifier + role), keyed by the CSRF state token.
+/// Rows are deleted on callback; stale rows can be swept by age.
+model OAuthState {
+  state        String   @id
+  projectId    String
+  role         OrgRole
+  codeVerifier String
+  loginUrl     String
+  createdAt    DateTime @default(now())
+
+  project MigrationProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@map("oauth_state")
 }
 
 /// A connected Salesforce org (one source, one target per project). Tokens encrypted at rest.

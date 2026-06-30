@@ -1,8 +1,15 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
+import { API_BASE, apiGet, apiPost, card, btn, input } from "./lib/api";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
+type Project = {
+  id: string;
+  name: string;
+  createdAt: string;
+  connections: { role: string }[];
+};
 
 const STAGES = [
   { n: 1, name: "Analyze", desc: "Connect orgs, discover schema, draft mapping" },
@@ -13,24 +20,39 @@ const STAGES = [
 ];
 
 export default function Home() {
-  const [apiStatus, setApiStatus] = useState<string>("checking…");
-  const [noopResult, setNoopResult] = useState<string>("");
+  const [apiStatus, setApiStatus] = useState("checking…");
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [name, setName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  async function load() {
+    try {
+      await apiGet("/health");
+      setApiStatus("ok ✓");
+      setProjects(await apiGet<Project[]>("/projects"));
+    } catch {
+      setApiStatus("unreachable ✗");
+    }
+  }
 
   useEffect(() => {
-    fetch(`${API_URL}/health`)
-      .then((r) => r.json())
-      .then((d) => setApiStatus(d.status === "ok" ? "ok ✓" : "degraded"))
-      .catch(() => setApiStatus("unreachable ✗"));
+    void load();
   }, []);
 
-  async function enqueueNoop() {
-    setNoopResult("enqueuing…");
+  async function createProject(e: React.FormEvent) {
+    e.preventDefault();
+    if (!name.trim()) return;
+    setBusy(true);
+    setErr("");
     try {
-      const r = await fetch(`${API_URL}/dev/enqueue-noop`, { method: "POST" });
-      const d = await r.json();
-      setNoopResult(`enqueued job ${d.jobId} → check worker logs`);
-    } catch {
-      setNoopResult("failed — is the api running?");
+      await apiPost<Project>("/projects", { name: name.trim() });
+      setName("");
+      await load();
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -38,23 +60,44 @@ export default function Home() {
     <main style={{ maxWidth: 760, margin: "0 auto", padding: "48px 24px" }}>
       <h1 style={{ marginBottom: 4 }}>OpenNPC Migration Platform</h1>
       <p style={{ color: "#9aa4c0", marginTop: 0 }}>
-        Migrate Salesforce NPSP → Nonprofit Cloud. Foundation scaffold (Milestone 1).
+        Migrate Salesforce NPSP → Nonprofit Cloud. API: <strong>{apiStatus}</strong> ({API_BASE})
       </p>
 
-      <section style={cardStyle}>
-        <strong>API health:</strong> {apiStatus}
-        <div style={{ marginTop: 12 }}>
-          <button onClick={enqueueNoop} style={btnStyle}>
-            Enqueue no-op job (smoke test)
-          </button>
-          {noopResult && <span style={{ marginLeft: 12, color: "#9aa4c0" }}>{noopResult}</span>}
-        </div>
-      </section>
+      <h2 style={{ marginTop: 28 }}>Migration projects</h2>
+      <form onSubmit={createProject} style={{ ...card, display: "flex", gap: 8 }}>
+        <input
+          style={{ ...input, flex: 1 }}
+          placeholder="New project name (e.g. Acme Foundation)"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+        />
+        <button type="submit" style={btn} disabled={busy}>
+          {busy ? "Creating…" : "Create project"}
+        </button>
+      </form>
+      {err && <p style={{ color: "#f87171" }}>{err}</p>}
+
+      {projects.length === 0 ? (
+        <p style={{ color: "#9aa4c0" }}>No projects yet — create one to connect your orgs.</p>
+      ) : (
+        <ul style={{ listStyle: "none", padding: 0 }}>
+          {projects.map((p) => (
+            <li key={p.id} style={card}>
+              <Link href={`/projects/${p.id}`} style={{ color: "#93c5fd", fontWeight: 600 }}>
+                {p.name}
+              </Link>
+              <div style={{ color: "#9aa4c0", fontSize: 13, marginTop: 4 }}>
+                Connected: {p.connections.length ? p.connections.map((c) => c.role).join(", ") : "none"}
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
 
       <h2 style={{ marginTop: 32 }}>The 5-stage migration</h2>
       <ol style={{ listStyle: "none", padding: 0 }}>
         {STAGES.map((s) => (
-          <li key={s.n} style={cardStyle}>
+          <li key={s.n} style={card}>
             <strong>
               {s.n}. {s.name}
             </strong>
@@ -65,20 +108,3 @@ export default function Home() {
     </main>
   );
 }
-
-const cardStyle: React.CSSProperties = {
-  background: "#151b33",
-  border: "1px solid #283157",
-  borderRadius: 10,
-  padding: 16,
-  margin: "12px 0",
-};
-
-const btnStyle: React.CSSProperties = {
-  background: "#3b82f6",
-  color: "white",
-  border: "none",
-  borderRadius: 8,
-  padding: "8px 14px",
-  cursor: "pointer",
-};
