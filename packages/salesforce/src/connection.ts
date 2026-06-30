@@ -1,0 +1,24 @@
+import { Connection } from "jsforce";
+
+export const DEFAULT_API_VERSION = process.env.SF_API_VERSION ?? "62.0";
+
+export interface SfConnectionConfig {
+  instanceUrl: string;
+  accessToken: string;
+  version?: string;
+  /**
+   * Source connections are read-only. When true, any write (DML/ingest) must be
+   * rejected. Enforcement for Bulk writes lands in Milestone 3; capability probes
+   * (Milestone 2) are read-only regardless.
+   */
+  readOnly?: boolean;
+}
+
+/** Create a jsforce Connection from a stored access token + instance URL. */
+export function createConnection(cfg: SfConnectionConfig): Connection {
+  return new Connection({
+    instanceUrl: cfg.instanceUrl,
+    accessToken: cfg.accessToken,
+    version: cfg.version ?? DEFAULT_API_VERSION,
+  });
+}

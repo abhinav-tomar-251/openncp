@@ -2,6 +2,9 @@ import Fastify from "fastify";
 import cors from "@fastify/cors";
 import { prisma } from "@opennpc/db";
 import { createBoss, QUEUES, type PgBoss } from "@opennpc/core";
+import { projectRoutes } from "./routes/projects.js";
+import { oauthRoutes } from "./routes/oauth.js";
+import { connectionRoutes } from "./routes/connections.js";
 
 const PORT = Number(process.env.API_PORT ?? 3001);
 
@@ -37,6 +40,11 @@ async function main(): Promise<void> {
   // Enable CORS so the browser UI (different origin) can read api responses.
   // `origin: true` reflects the requesting origin — fine for local/self-host dev.
   await app.register(cors, { origin: WEB_ORIGIN ?? true });
+
+  // Milestone 2: projects + ECA OAuth connect + capability probe.
+  await app.register(projectRoutes);
+  await app.register(oauthRoutes);
+  await app.register(connectionRoutes);
 
   boss = createBoss();
   boss.on("error", (err: Error) => app.log.error(err, "pg-boss error"));
