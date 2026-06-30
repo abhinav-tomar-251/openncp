@@ -1,0 +1,55 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: opennpc
+      POSTGRES_PASSWORD: opennpc
+      POSTGRES_DB: opennpc
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U opennpc -d opennpc"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build: .
+    # Push the Prisma schema (idempotent) then start the api.
+    command: sh -c "pnpm --filter @opennpc/db run push && pnpm --filter @opennpc/api run start"
+    environment:
+      DATABASE_URL: "postgresql://opennpc:opennpc@postgres:5432/opennpc?schema=public"
+      API_PORT: "3001"
+      APP_ENCRYPTION_KEY: "dev-only-change-me-dev-only-change-me-32b"
+      WORKER_CONCURRENCY: "4"
+    ports:
+      - "3001:3001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  worker:
+    build: .
+    command: pnpm --filter @opennpc/worker run start
+    environment:
+      DATABASE_URL: "postgresql://opennpc:opennpc@postgres:5432/opennpc?schema=public"
+      WORKER_CONCURRENCY: "4"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  web:
+    build: .
+    command: pnpm --filter @opennpc/web run dev
+    environment:
+      PORT: "3000"
+      NEXT_PUBLIC_API_URL: "http://localhost:3001"
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+
+volumes:
+  pgdata:

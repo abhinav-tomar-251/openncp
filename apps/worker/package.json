@@ -1,0 +1,22 @@
+{
+  "name": "@opennpc/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/worker.ts",
+    "start": "tsx src/worker.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@opennpc/core": "workspace:*",
+    "@opennpc/db": "workspace:*",
+    "@opennpc/mapping": "workspace:*",
+    "@opennpc/salesforce": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.0",
+    "tsx": "^4.19.1",
+    "typescript": "^5.6.2"
+  }
+}
