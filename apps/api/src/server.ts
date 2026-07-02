@@ -5,6 +5,7 @@ import { createBoss, QUEUES, type PgBoss } from "@opennpc/core";
 import { projectRoutes } from "./routes/projects.js";
 import { oauthRoutes } from "./routes/oauth.js";
 import { connectionRoutes } from "./routes/connections.js";
+import { stageRoutes } from "./routes/stages.js";
 
 const PORT = Number(process.env.API_PORT ?? 3001);
 
@@ -41,14 +42,18 @@ async function main(): Promise<void> {
   // `origin: true` reflects the requesting origin — fine for local/self-host dev.
   await app.register(cors, { origin: WEB_ORIGIN ?? true });
 
+  // Queue is needed by stage routes (and /dev/enqueue-noop), so start it first.
+  boss = createBoss();
+  boss.on("error", (err: Error) => app.log.error(err, "pg-boss error"));
+  await boss.start();
+
   // Milestone 2: projects + ECA OAuth connect + capability probe.
   await app.register(projectRoutes);
   await app.register(oauthRoutes);
   await app.register(connectionRoutes);
+  // Milestone 3: stage control (Extract). Pass the started queue via a closure.
+  await app.register(async (a) => stageRoutes(a, boss));
 
-  boss = createBoss();
-  boss.on("error", (err: Error) => app.log.error(err, "pg-boss error"));
-  await boss.start();
   await app.listen({ port: PORT, host: "0.0.0.0" });
   app.log.info(`api listening on :${PORT}`);
 }

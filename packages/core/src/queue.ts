@@ -5,6 +5,8 @@ export const QUEUES = {
   /** Foundation smoke-test job (Milestone 1). */
   NOOP: "noop",
   ANALYZE_SCHEMA: "analyze.schema",
+  /** Plan an extract: discover present objects, create object_runs, fan out. */
+  EXTRACT_PLAN: "extract.plan",
   EXTRACT_OBJECT: "extract.object",
   TRANSFORM_OBJECT: "transform.object",
   PREPARE_TARGET: "prepare.target",

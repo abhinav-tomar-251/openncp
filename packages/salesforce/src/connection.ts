@@ -1,5 +1,8 @@
 import { Connection } from "jsforce";
 
+/** Re-exported so consumers can name the connection type without importing jsforce. */
+export type { Connection } from "jsforce";
+
 export const DEFAULT_API_VERSION = process.env.SF_API_VERSION ?? "62.0";
 
 export interface SfConnectionConfig {

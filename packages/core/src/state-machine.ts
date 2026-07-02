@@ -68,8 +68,10 @@ export function canStartStage(
  */
 export function deriveStageStatus(objectStatuses: readonly string[]): StageStatus {
   if (objectStatuses.length === 0) return "QUEUED";
-  if (objectStatuses.some((s) => s === "FAILED")) return "FAILED";
+  // Active objects take precedence: stay RUNNING until every object settles, so a
+  // failure alongside still-running objects doesn't flip the stage to FAILED early.
   if (objectStatuses.some((s) => s === "PENDING" || s === "RUNNING")) return "RUNNING";
+  if (objectStatuses.some((s) => s === "FAILED")) return "FAILED";
   // all COMPLETED or PARTIAL
   return "AWAITING_REVIEW";
 }

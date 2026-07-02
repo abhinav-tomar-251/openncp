@@ -80,7 +80,150 @@ export default function ProjectPage() {
           onChanged={load}
         />
       ))}
+
+      <ExtractPanel projectId={id} enabled={!!byRole("source")} />
     </main>
+  );
+}
+
+type ObjectRun = {
+  id: string;
+  objectApiName: string;
+  status: string;
+  processedCount: number;
+  failedCount: number;
+};
+type ExtractStage = { id?: string; status: string; stats?: { objects?: number }; objectRuns: ObjectRun[] };
+
+function ExtractPanel({ projectId, enabled }: { projectId: string; enabled: boolean }) {
+  const [stage, setStage] = useState<ExtractStage | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  async function refresh() {
+    try {
+      setStage(await apiGet<ExtractStage>(`/projects/${projectId}/stages/extract`));
+    } catch (e) {
+      setErr((e as Error).message);
+    }
+  }
+
+  useEffect(() => {
+    void refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId]);
+
+  // Poll while the stage is in flight.
+  useEffect(() => {
+    const active = stage?.status === "RUNNING" || stage?.status === "QUEUED";
+    if (!active) return;
+    const t = setInterval(refresh, 2000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stage?.status]);
+
+  async function run() {
+    setBusy(true);
+    setErr("");
+    try {
+      await apiPost(`/projects/${projectId}/stages/extract/run`);
+      await refresh();
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function retry(objectRunId: string) {
+    try {
+      await apiPost(`/projects/${projectId}/objects/${objectRunId}/retry`);
+      await refresh();
+    } catch (e) {
+      setErr((e as Error).message);
+    }
+  }
+
+  const objects = stage?.objectRuns ?? [];
+  const done = objects.filter((o) => o.status === "COMPLETED").length;
+
+  return (
+    <section style={card}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <strong>Stage 2 · Extract</strong>
+        <span style={{ color: "#9aa4c0" }}>{stage?.status ?? "NOT_STARTED"}</span>
+      </div>
+      <div style={{ color: "#9aa4c0", fontSize: 13, margin: "4px 0 12px" }}>
+        Bulk API 2.0 pulls each in-scope source object into staging.
+      </div>
+
+      <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+        <button style={btn} onClick={run} disabled={!enabled || busy}>
+          {busy ? "Starting…" : objects.length ? "Re-run Extract" : "Run Extract"}
+        </button>
+        {!enabled && <span style={{ color: "#9aa4c0", fontSize: 13 }}>Connect a source org first.</span>}
+      </div>
+      {err && <p style={{ color: "#f87171" }}>{err}</p>}
+
+      {objects.length > 0 && (
+        <>
+          <div style={{ margin: "12px 0 6px", color: "#9aa4c0", fontSize: 13 }}>
+            {done}/{objects.length} objects complete
+          </div>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+            <thead>
+              <tr style={{ color: "#9aa4c0", textAlign: "left" }}>
+                <th style={{ padding: "4px 6px" }}>Object</th>
+                <th style={{ padding: "4px 6px" }}>Status</th>
+                <th style={{ padding: "4px 6px", textAlign: "right" }}>Records</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {objects.map((o) => (
+                <tr key={o.id} style={{ borderTop: "1px solid #283157" }}>
+                  <td style={{ padding: "4px 6px" }}>
+                    <code>{o.objectApiName}</code>
+                  </td>
+                  <td style={{ padding: "4px 6px" }}>
+                    <StatusPill status={o.status} />
+                  </td>
+                  <td style={{ padding: "4px 6px", textAlign: "right" }}>
+                    {o.processedCount.toLocaleString()}
+                  </td>
+                  <td style={{ padding: "4px 6px", textAlign: "right" }}>
+                    {o.status === "FAILED" && (
+                      <button
+                        onClick={() => retry(o.id)}
+                        style={{ ...btn, background: "#334155", padding: "2px 8px" }}
+                      >
+                        Retry
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
+    </section>
+  );
+}
+
+function StatusPill({ status }: { status: string }) {
+  const colors: Record<string, [string, string]> = {
+    COMPLETED: ["#14532d", "#86efac"],
+    RUNNING: ["#1e3a5f", "#93c5fd"],
+    PENDING: ["#3f3f46", "#d4d4d8"],
+    PARTIAL: ["#422006", "#fbbf24"],
+    FAILED: ["#3f1d1d", "#fca5a5"],
+  };
+  const [bg, fg] = colors[status] ?? ["#3f3f46", "#d4d4d8"];
+  return (
+    <span style={{ background: bg, color: fg, borderRadius: 999, padding: "2px 8px", fontSize: 12 }}>
+      {status}
+    </span>
   );
 }
 

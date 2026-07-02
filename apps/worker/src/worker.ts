@@ -1,10 +1,16 @@
 import { createBoss, QUEUES, type PgBoss } from "@opennpc/core";
+import { runExtractPlan, runExtractObject } from "./jobs/extract.js";
 
 const CONCURRENCY = Number(process.env.WORKER_CONCURRENCY ?? 4);
 
 type NoopData = { enqueuedAt?: number; [k: string]: unknown };
 
 let boss: PgBoss;
+
+/** Normalize a pg-boss work callback arg across versions (single job vs array). */
+function asJobs<T>(job: unknown): { id: string; data: T }[] {
+  return (Array.isArray(job) ? job : [job]) as { id: string; data: T }[];
+}
 
 async function main(): Promise<void> {
   boss = createBoss();
@@ -24,6 +30,25 @@ async function main(): Promise<void> {
           `[worker] processed ${QUEUES.NOOP} job ${j.id}` +
             (latencyMs !== null ? ` (latency ${latencyMs}ms)` : ""),
         );
+      }
+    },
+  );
+
+  // Milestone 3: Extract stage.
+  await boss.work<{ stageRunId: string }>(QUEUES.EXTRACT_PLAN, async (job) => {
+    for (const j of asJobs<{ stageRunId: string }>(job)) {
+      console.log(`[worker] extract.plan stageRun=${j.data.stageRunId}`);
+      await runExtractPlan(boss, j.data.stageRunId);
+    }
+  });
+
+  await boss.work<{ objectRunId: string }>(
+    QUEUES.EXTRACT_OBJECT,
+    { teamSize: CONCURRENCY },
+    async (job) => {
+      for (const j of asJobs<{ objectRunId: string }>(job)) {
+        console.log(`[worker] extract.object objectRun=${j.data.objectRunId}`);
+        await runExtractObject(j.data.objectRunId);
       }
     },
   );
