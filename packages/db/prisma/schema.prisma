@@ -47,15 +47,46 @@ enum LoadStatus {
   error
 }
 
+/// An application user. Each user is their own tenant (user-as-tenant): they own
+/// their projects and org connections. See docs/17 §B.
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  name         String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  sessions Session[]
+  projects MigrationProject[]
+
+  @@map("app_user")
+}
+
+/// Server-side session; the cookie stores the session id (a random token).
+model Session {
+  id        String   @id
+  userId    String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("session")
+}
+
 /// Top-level container for one NPSP -> NPC migration.
 model MigrationProject {
   id        String   @id @default(uuid())
   name      String
+  ownerId   String? // the owning user (tenant). Nullable for pre-auth legacy rows.
   scope     Json     @default("{}") // { core, relationships, programs, campaigns }
   status    String   @default("active") // active | completed | archived
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  owner       User?               @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   connections OrgConnection[]
   stageRuns   StageRun[]
   mappings    MappingDefinition[]
@@ -65,6 +96,7 @@ model MigrationProject {
   errors      MigrationError[]
   oauthStates OAuthState[]
 
+  @@index([ownerId])
   @@map("migration_project")
 }
 
@@ -73,6 +105,7 @@ model MigrationProject {
 model OAuthState {
   state        String   @id
   projectId    String
+  userId       String? // the user who initiated the flow, for audit/ownership checks
   role         OrgRole
   codeVerifier String
   loginUrl     String
@@ -131,6 +164,10 @@ model ObjectRun {
   id             String       @id @default(uuid())
   stageRunId     String
   objectApiName  String
+  /// Null for Extract/Transform/Load/Validate object runs. Set for Analyze rows to
+  /// distinguish source-org discovery from target-org schema-check rows within the
+  /// same stage_run.
+  role           OrgRole?
   status         ObjectStatus @default(PENDING)
   processedCount Int          @default(0)
   failedCount    Int          @default(0)
@@ -148,23 +185,33 @@ model ObjectRun {
   @@map("object_run")
 }
 
-/// Editable NPSP -> NPC mapping; auto-draft is version 1.
+/// Per-project NPSP -> NPC mapping, auto-drafted at Analyze and editable thereafter.
+/// `object` is the SOURCE object; `target` is the NPC target object. `options` holds
+/// the non-scalar mapping bits { lookups, constants, reconcile } (function-valued
+/// `filter`s aren't serialized — a named-filter registry is the future path).
+/// `enabled` gates whether the pipeline runs this mapping (curated seeds default on;
+/// heuristic drafts default off, review-required). See docs/08-transformation-engine.md.
 model MappingDefinition {
-  id         String   @id @default(uuid())
-  projectId  String
-  object     String
-  fieldMap   Json     @default("{}")
-  valueMap   Json     @default("{}")
-  options    Json     @default("{}")
-  version    Int      @default(1)
-  approvedBy String?
-  approvedAt DateTime?
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  id          String    @id @default(uuid())
+  projectId   String
+  object      String // SOURCE object api name
+  target      String? // NPC target object api name (null when unmapped/needs review)
+  fieldMap    Json      @default("{}")
+  valueMap    Json      @default("{}")
+  options     Json      @default("{}") // { lookups?, constants?, reconcile? }
+  enabled     Boolean   @default(true)
+  autoDrafted Boolean   @default(false)
+  confidence  String? // "curated" | "heuristic" | "unmapped"
+  version     Int       @default(1)
+  approvedBy  String?
+  approvedAt  DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
   project MigrationProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
   @@unique([projectId, object, version])
+  @@index([projectId, enabled])
   @@map("mapping_definition")
 }
 
@@ -190,6 +237,7 @@ model StagingTarget {
   id           BigInt     @id @default(autoincrement())
   projectId    String
   targetObject String
+  sourceObject String
   transformed  Json
   sourceRef    String
   loadStatus   LoadStatus @default(pending)
@@ -200,6 +248,7 @@ model StagingTarget {
   project MigrationProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
   @@index([projectId, targetObject])
+  @@index([projectId, sourceObject])
   @@index([projectId, loadStatus])
   @@map("staging_target")
 }

@@ -12,6 +12,11 @@ import {
  * Build a live jsforce Connection for a project's org by refreshing the stored
  * (encrypted) refresh token. The freshly-issued access token is re-encrypted and
  * persisted. Source connections are marked read-only.
+ *
+ * Some orgs rotate the refresh token on every refresh-grant exchange (issuing a
+ * new one and invalidating the old). If we didn't persist a rotated token here,
+ * the very next refresh would fail with invalid_grant — so any refresh_token
+ * Salesforce returns must be re-saved, not just the access token.
  */
 export async function getLiveConnection(
   projectId: string,
@@ -25,7 +30,7 @@ export async function getLiveConnection(
   }
 
   const meta = (oc.tokenMeta ?? {}) as { loginUrl?: string };
-  const app = loadOAuthAppFromEnv(meta.loginUrl);
+  const app = loadOAuthAppFromEnv(role, meta.loginUrl);
   const refreshToken = decryptSecret(Buffer.from(oc.refreshTokenEnc));
   const token = await refreshAccessToken(app, refreshToken);
 
@@ -33,6 +38,7 @@ export async function getLiveConnection(
     where: { projectId_role: { projectId, role } },
     data: {
       accessTokenEnc: encryptSecret(token.access_token),
+      refreshTokenEnc: token.refresh_token ? encryptSecret(token.refresh_token) : undefined,
       instanceUrl: token.instance_url,
     },
   });

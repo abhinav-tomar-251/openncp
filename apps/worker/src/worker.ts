@@ -1,5 +1,10 @@
 import { createBoss, QUEUES, type PgBoss } from "@opennpc/core";
+import { runAnalyzePlan } from "./jobs/analyze.js";
 import { runExtractPlan, runExtractObject } from "./jobs/extract.js";
+import { runTransformPlan, runTransformObject } from "./jobs/transform.js";
+import { runPrepareTarget } from "./jobs/prepareTarget.js";
+import { runLoadPlan, runLoadObject } from "./jobs/load.js";
+import { runValidatePlan, runValidateObject } from "./jobs/validate.js";
 
 const CONCURRENCY = Number(process.env.WORKER_CONCURRENCY ?? 4);
 
@@ -34,6 +39,15 @@ async function main(): Promise<void> {
     },
   );
 
+  // Analyze stage: discover what each org actually has, before Extract/Transform
+  // assume anything. No per-object queue — a describe+count pass runs inline.
+  await boss.work<{ stageRunId: string }>(QUEUES.ANALYZE_SCHEMA, async (job) => {
+    for (const j of asJobs<{ stageRunId: string }>(job)) {
+      console.log(`[worker] analyze.plan stageRun=${j.data.stageRunId}`);
+      await runAnalyzePlan(j.data.stageRunId);
+    }
+  });
+
   // Milestone 3: Extract stage.
   await boss.work<{ stageRunId: string }>(QUEUES.EXTRACT_PLAN, async (job) => {
     for (const j of asJobs<{ stageRunId: string }>(job)) {
@@ -49,6 +63,66 @@ async function main(): Promise<void> {
       for (const j of asJobs<{ objectRunId: string }>(job)) {
         console.log(`[worker] extract.object objectRun=${j.data.objectRunId}`);
         await runExtractObject(j.data.objectRunId);
+      }
+    },
+  );
+
+  // Milestone 4: Transform stage + target-schema prep.
+  await boss.work<{ stageRunId: string }>(QUEUES.TRANSFORM_PLAN, async (job) => {
+    for (const j of asJobs<{ stageRunId: string }>(job)) {
+      console.log(`[worker] transform.plan stageRun=${j.data.stageRunId}`);
+      await runTransformPlan(boss, j.data.stageRunId);
+    }
+  });
+
+  await boss.work<{ objectRunId: string }>(
+    QUEUES.TRANSFORM_OBJECT,
+    { teamSize: CONCURRENCY },
+    async (job) => {
+      for (const j of asJobs<{ objectRunId: string }>(job)) {
+        console.log(`[worker] transform.object objectRun=${j.data.objectRunId}`);
+        await runTransformObject(j.data.objectRunId);
+      }
+    },
+  );
+
+  await boss.work<{ projectId: string }>(QUEUES.PREPARE_TARGET, async (job) => {
+    for (const j of asJobs<{ projectId: string }>(job)) {
+      console.log(`[worker] prepare.target project=${j.data.projectId}`);
+      await runPrepareTarget(j.data.projectId);
+    }
+  });
+
+  // Milestone 5: Load stage (dependency-ordered, chained).
+  await boss.work<{ stageRunId: string }>(QUEUES.LOAD_PLAN, async (job) => {
+    for (const j of asJobs<{ stageRunId: string }>(job)) {
+      console.log(`[worker] load.plan stageRun=${j.data.stageRunId}`);
+      await runLoadPlan(boss, j.data.stageRunId);
+    }
+  });
+
+  await boss.work<{ objectRunId: string }>(QUEUES.LOAD_OBJECT, async (job) => {
+    for (const j of asJobs<{ objectRunId: string }>(job)) {
+      console.log(`[worker] load.object objectRun=${j.data.objectRunId}`);
+      await runLoadObject(boss, j.data.objectRunId);
+    }
+  });
+
+  // Milestone 6: Validate stage (read-only reconciliation).
+  await boss.work<{ stageRunId: string }>(QUEUES.VALIDATE_PLAN, async (job) => {
+    for (const j of asJobs<{ stageRunId: string }>(job)) {
+      console.log(`[worker] validate.plan stageRun=${j.data.stageRunId}`);
+      await runValidatePlan(boss, j.data.stageRunId);
+    }
+  });
+
+  await boss.work<{ objectRunId: string }>(
+    QUEUES.VALIDATE_RECONCILE,
+    { teamSize: CONCURRENCY },
+    async (job) => {
+      for (const j of asJobs<{ objectRunId: string }>(job)) {
+        console.log(`[worker] validate.reconcile objectRun=${j.data.objectRunId}`);
+        await runValidateObject(j.data.objectRunId);
       }
     },
   );

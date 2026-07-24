@@ -13,14 +13,20 @@ import {
   SANDBOX_LOGIN_URL,
   type CapabilityReport,
 } from "@opennpc/salesforce";
+import { requireAuth } from "../auth.js";
+import { getOwnedProject } from "../lib/ownership.js";
 
 const WEB_APP_URL = process.env.WEB_APP_URL ?? "http://localhost:3000";
 
 type Role = "source" | "target";
 
 export async function oauthRoutes(app: FastifyInstance): Promise<void> {
-  /** Begin the OAuth Authorization Code + PKCE flow; redirects to Salesforce. */
-  app.get("/oauth/start", async (req, reply) => {
+  /**
+   * Begin the OAuth Authorization Code + PKCE flow; redirects to Salesforce.
+   * Requires auth and project ownership so a user can only attach an org to a
+   * project they own (see docs/17 §B.4).
+   */
+  app.get("/oauth/start", { preHandler: requireAuth }, async (req, reply) => {
     const { projectId, role, sandbox } = req.query as {
       projectId?: string;
       role?: string;
@@ -29,16 +35,16 @@ export async function oauthRoutes(app: FastifyInstance): Promise<void> {
     if (!projectId || (role !== "source" && role !== "target")) {
       return reply.code(400).send({ error: "projectId and role=source|target are required" });
     }
-    const project = await prisma.migrationProject.findUnique({ where: { id: projectId } });
+    const project = await getOwnedProject(req.userId!, projectId);
     if (!project) return reply.code(404).send({ error: "project not found" });
 
     const loginUrl = sandbox === "true" ? SANDBOX_LOGIN_URL : process.env.SF_LOGIN_URL ?? PROD_LOGIN_URL;
-    const oauthApp = loadOAuthAppFromEnv(loginUrl);
+    const oauthApp = loadOAuthAppFromEnv(role, loginUrl);
     const { verifier, challenge } = generatePkce();
     const state = generateState();
 
     await prisma.oAuthState.create({
-      data: { state, projectId, role, codeVerifier: verifier, loginUrl },
+      data: { state, projectId, userId: req.userId, role, codeVerifier: verifier, loginUrl },
     });
 
     return reply.redirect(buildAuthorizeUrl(oauthApp, { state, codeChallenge: challenge }));
@@ -57,7 +63,7 @@ export async function oauthRoutes(app: FastifyInstance): Promise<void> {
     if (!saved) return reply.code(400).send({ error: "invalid or expired state" });
     await prisma.oAuthState.delete({ where: { state } });
 
-    const oauthApp = loadOAuthAppFromEnv(saved.loginUrl);
+    const oauthApp = loadOAuthAppFromEnv(saved.role as Role, saved.loginUrl);
     const token = await exchangeCodeForToken(oauthApp, code, saved.codeVerifier);
 
     const conn = createConnection({ instanceUrl: token.instance_url, accessToken: token.access_token });

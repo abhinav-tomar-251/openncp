@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { API_BASE, apiGet, apiPost, card, btn, input } from "./lib/api";
+import { useSession } from "./lib/useSession";
 
 type Project = {
   id: string;
@@ -20,6 +21,7 @@ const STAGES = [
 ];
 
 export default function Home() {
+  const { user, loading: sessionLoading, logout } = useSession();
   const [apiStatus, setApiStatus] = useState("checking…");
   const [projects, setProjects] = useState<Project[]>([]);
   const [name, setName] = useState("");
@@ -36,9 +38,11 @@ export default function Home() {
     }
   }
 
+  // Only load the (auth-scoped) project list once we know who's signed in.
   useEffect(() => {
-    void load();
-  }, []);
+    if (user) void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user]);
 
   async function createProject(e: React.FormEvent) {
     e.preventDefault();
@@ -56,9 +60,23 @@ export default function Home() {
     }
   }
 
+  if (sessionLoading) return <main style={{ maxWidth: 760, margin: "0 auto", padding: "48px 24px" }}>Loading…</main>;
+  if (!user) return null; // redirecting to /login
+
   return (
     <main style={{ maxWidth: 760, margin: "0 auto", padding: "48px 24px" }}>
-      <h1 style={{ marginBottom: 4 }}>OpenNPC Migration Platform</h1>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+        <h1 style={{ marginBottom: 4 }}>OpenNPC Migration Platform</h1>
+        <div style={{ fontSize: 13, color: "#9aa4c0" }}>
+          {user.email} ·{" "}
+          <button
+            onClick={() => void logout()}
+            style={{ background: "none", border: "none", color: "#93c5fd", cursor: "pointer", padding: 0 }}
+          >
+            Log out
+          </button>
+        </div>
+      </div>
       <p style={{ color: "#9aa4c0", marginTop: 0 }}>
         Migrate Salesforce NPSP → Nonprofit Cloud. API: <strong>{apiStatus}</strong> ({API_BASE})
       </p>

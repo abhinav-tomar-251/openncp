@@ -13,8 +13,26 @@ import { updateStageStatusFromObjects } from "../lib/stage.js";
 const BATCH = Number(process.env.BULK_BATCH_SIZE ?? 10000);
 
 /**
+ * The Analyze stage's discovered source-object list for this project, if Analyze
+ * has been run (and, per the review gate, approved before Extract could start).
+ * Only objects Analyze found with actual records are included. Returns null if no
+ * Analyze run exists yet, so callers can fall back to the static catalog.
+ */
+async function analyzedSourceObjects(projectId: string): Promise<string[] | null> {
+  const latestAnalyze = await prisma.stageRun.findFirst({
+    where: { projectId, stage: "analyze" },
+    orderBy: { createdAt: "desc" },
+    include: { objectRuns: { where: { role: "source", processedCount: { gt: 0 } } } },
+  });
+  if (!latestAnalyze || latestAnalyze.objectRuns.length === 0) return null;
+  return latestAnalyze.objectRuns.map((o) => o.objectApiName);
+}
+
+/**
  * Extract planner: discover which in-scope source objects exist, create an
- * object_run per object, and fan out extract.object jobs.
+ * object_run per object, and fan out extract.object jobs. Prefers the Analyze
+ * stage's live discovery of the org's actual objects; falls back to the static
+ * catalog if Analyze hasn't been run for this project yet.
  */
 export async function runExtractPlan(boss: PgBoss, stageRunId: string): Promise<void> {
   const stageRun = await prisma.stageRun.findUnique({ where: { id: stageRunId } });
@@ -22,7 +40,8 @@ export async function runExtractPlan(boss: PgBoss, stageRunId: string): Promise<
   const { projectId } = stageRun;
 
   const { conn } = await getLiveConnection(projectId, "source");
-  const present = await listPresentObjects(conn, DEFAULT_SOURCE_OBJECTS);
+  const candidates = (await analyzedSourceObjects(projectId)) ?? DEFAULT_SOURCE_OBJECTS;
+  const present = await listPresentObjects(conn, candidates);
 
   if (present.length === 0) {
     await prisma.stageRun.update({

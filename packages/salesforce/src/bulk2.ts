@@ -1,10 +1,10 @@
-import type { Connection } from "jsforce";
+import type { Connection, Record as SfRecord } from "jsforce";
 
 /**
- * Bulk API 2.0 query (the Extract engine). Bulk 2.0 automatically chunks large
- * result sets server-side, so no manual PK chunking is required. Results are
- * streamed and handed to `onBatch` in chunks so large objects don't have to be
- * held entirely in memory. See docs/07-salesforce-integration.md §2.
+ * Bulk API 2.0 query (Extract) and upsert (Load). Bulk 2.0 automatically chunks
+ * large result sets server-side, so no manual PK chunking is required. Query
+ * results are streamed and handed to `onBatch` in chunks so large objects don't
+ * have to be held entirely in memory. See docs/07-salesforce-integration.md §2.
  */
 
 /** Minimal shape of the jsforce Bulk 2.0 record stream we rely on. */
@@ -66,4 +66,46 @@ export async function bulkQuery(conn: Connection, opts: BulkQueryOptions): Promi
         .catch(reject);
     });
   });
+}
+
+export interface BulkUpsertResult {
+  successes: { targetId: string; created: boolean; externalId: string }[];
+  failures: { externalId: string; error: string }[];
+}
+
+/**
+ * Bulk API 2.0 upsert (the Load engine) keyed on an external-id field. Idempotent:
+ * re-running upserts the same rows again (update, never duplicate). Returns the new
+ * target ids (mapped back via the external-id value) and per-record failures.
+ * See docs/07-salesforce-integration.md §2.
+ */
+export async function bulkUpsert(
+  conn: Connection,
+  object: string,
+  externalIdField: string,
+  records: Record<string, unknown>[],
+): Promise<BulkUpsertResult> {
+  if (records.length === 0) return { successes: [], failures: [] };
+
+  const res = await conn.bulk2.loadAndWaitForResults({
+    object,
+    operation: "upsert",
+    externalIdFieldName: externalIdField,
+    input: records as unknown as SfRecord[],
+  });
+
+  const field = (r: unknown): string =>
+    String((r as Record<string, unknown>)[externalIdField] ?? "");
+
+  return {
+    successes: res.successfulResults.map((r) => ({
+      targetId: r.sf__Id,
+      created: r.sf__Created === "true",
+      externalId: field(r),
+    })),
+    failures: res.failedResults.map((r) => ({
+      externalId: field(r),
+      error: r.sf__Error,
+    })),
+  };
 }

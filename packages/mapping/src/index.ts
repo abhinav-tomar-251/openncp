@@ -1,30 +1,44 @@
 /**
  * @opennpc/mapping — the transformation engine and default NPSP -> NPC mappings.
- *
- * Foundation stub (Milestone 1): defines the mapping-definition shape so the rest
- * of the system can type against it. The engine and default YAML mappings land in
- * Milestone 7. See docs/08-transformation-engine.md.
+ * See docs/08-transformation-engine.md.
  */
 
-/** A field map entry: a plain copy, or a lookup re-pointed through id_xref. */
-export type FieldMapValue = string | { ref: string; via: "id_xref" };
+export * from "./engine.js";
+export * from "./defaults.js";
+export * from "./userMatch.js";
+export * from "./draft.js";
+
+/** External-ID field provisioned on every target object for idempotent upserts. */
+export const LEGACY_EXTERNAL_ID_FIELD = "Legacy_NPSP_Id__c";
+
+/** Link a source lookup to a target parent via the parent's external id (resolved at load). */
+export interface LookupMapping {
+  /** Target relationship name, e.g. "Campaign" or "Parent". */
+  relationship: string;
+  /** Target object the parent maps to (for id_xref clarity). */
+  targetObject: string;
+  /** External-id field on the parent used to resolve the link. Defaults to Legacy_NPSP_Id__c. */
+  externalIdField?: string;
+}
 
 export interface MappingDefinition {
   /** Source object API name, e.g. "Opportunity". */
   source: string;
   /** Target object API name, e.g. "GiftTransaction". */
   target: string;
-  /** Source field -> target field (or lookup ref). */
-  fieldMap: Record<string, FieldMapValue>;
-  /** Per-field value translation (picklists, stages, record types). */
+  /** Only transform source rows for which this predicate returns true. */
+  filter?: (raw: Record<string, unknown>) => boolean;
+  /** Source field -> target field (scalar copy). */
+  fieldMap: Record<string, string>;
+  /** Per-source-field value translation (picklists, stages). */
   valueMap?: Record<string, Record<string, string>>;
-  /** Record type translation. */
-  recordTypeMap?: Record<string, string>;
-  /** Per-object transform options, e.g. { paymentSplit: "installments" }. */
-  options?: Record<string, unknown>;
-  /** Computed constants/templates, incl. the Legacy_NPSP_Id__c external id. */
-  constants?: Record<string, string>;
+  /** Source Id field -> lookup, written as `${relationship}.${externalIdField}` = source parent id. */
+  lookups?: Record<string, LookupMapping>;
+  /** Static target field values. */
+  constants?: Record<string, unknown>;
+  /** Optional financial reconciliation spec for the Validate stage. */
+  reconcile?: {
+    /** Target-object numeric field to sum, e.g. "OriginalAmount" (docs/09 §1). */
+    amountField: string;
+  };
 }
-
-/** External-ID field provisioned on every target object for idempotent upserts. */
-export const LEGACY_EXTERNAL_ID_FIELD = "Legacy_NPSP_Id__c";

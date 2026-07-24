@@ -45,6 +45,7 @@ exactly the kind of work that benefits from a transparent, auditable, repeatable
 | 14 | [Testing Strategy](14-testing-strategy.md) | Unit/integration/e2e, robustness & scale tests |
 | 15 | [Repository Structure](15-repository-structure.md) | Monorepo layout and key modules |
 | 16 | [Contributing](16-contributing.md) | How to contribute, add mappings, dev setup |
+| 17 | [Multi-Tenant & Cross-Org OAuth Setup](17-multi-tenant-and-oauth-setup.md) | Distributed OAuth app + multi-tenant architecture (connect any org, many users) |
 
 ---
 

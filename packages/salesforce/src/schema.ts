@@ -37,6 +37,35 @@ export async function countRecords(conn: Connection, object: string): Promise<nu
   return res.totalSize;
 }
 
+/**
+ * Build an aggregate `SELECT COUNT(Id)[, SUM(amountField)] FROM object WHERE
+ * extIdField != null` query — scopes the aggregate to only records this platform
+ * migrated (identified by having the external-id field populated). Used by the
+ * Validate stage to read back the live target org state. See docs/09 §1.
+ */
+export function buildAggregateSoql(object: string, extIdField: string, amountField?: string): string {
+  const select = amountField ? `COUNT(Id) cnt, SUM(${amountField}) amt` : "COUNT(Id) cnt";
+  return `SELECT ${select} FROM ${object} WHERE ${extIdField} != null`;
+}
+
+export interface AggregateResult {
+  count: number;
+  sum: number | null;
+}
+
+/** Run the aggregate query built by buildAggregateSoql and return {count, sum}. */
+export async function aggregateByExternalId(
+  conn: Connection,
+  object: string,
+  extIdField: string,
+  amountField?: string,
+): Promise<AggregateResult> {
+  const soql = buildAggregateSoql(object, extIdField, amountField);
+  const res = await conn.query<{ cnt: number; amt?: number | null }>(soql);
+  const row = res.records[0];
+  return { count: row?.cnt ?? 0, sum: amountField ? (row?.amt ?? 0) : null };
+}
+
 /** Of the given candidate objects, return those that exist and are queryable in the org. */
 export async function listPresentObjects(
   conn: Connection,

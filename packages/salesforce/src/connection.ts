@@ -19,9 +19,14 @@ export interface SfConnectionConfig {
 
 /** Create a jsforce Connection from a stored access token + instance URL. */
 export function createConnection(cfg: SfConnectionConfig): Connection {
-  return new Connection({
+  const conn = new Connection({
     instanceUrl: cfg.instanceUrl,
     accessToken: cfg.accessToken,
     version: cfg.version ?? DEFAULT_API_VERSION,
   });
+  // Increase Bulk 2.0 polling timeout to 5 minutes (300000ms)
+  conn.bulk2.pollTimeout = 300000;
+  // Optionally increase polling interval to reduce API requests (e.g. 5 seconds)
+  conn.bulk2.pollInterval = 5000;
+  return conn;
 }

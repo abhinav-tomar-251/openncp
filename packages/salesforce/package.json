@@ -10,7 +10,7 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "node --test --import tsx ./src/**/*.test.ts"
+    "test": "node ../../scripts/test.mjs"
   },
   "dependencies": {
     "jsforce": "^3.6.0"

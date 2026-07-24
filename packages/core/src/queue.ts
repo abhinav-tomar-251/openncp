@@ -8,9 +8,15 @@ export const QUEUES = {
   /** Plan an extract: discover present objects, create object_runs, fan out. */
   EXTRACT_PLAN: "extract.plan",
   EXTRACT_OBJECT: "extract.object",
+  /** Plan a transform: create object_runs for mapped source objects, fan out. */
+  TRANSFORM_PLAN: "transform.plan",
   TRANSFORM_OBJECT: "transform.object",
   PREPARE_TARGET: "prepare.target",
+  /** Plan a load: create object_runs in dependency order, chain them. */
+  LOAD_PLAN: "load.plan",
   LOAD_OBJECT: "load.object",
+  /** Plan a validate: create object_runs for loaded target objects, fan out. */
+  VALIDATE_PLAN: "validate.plan",
   VALIDATE_RECONCILE: "validate.reconcile",
 } as const;
 

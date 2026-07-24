@@ -114,14 +114,35 @@ export function parseIdentityUrl(identityUrl: string): { orgId: string; userId: 
   return m ? { orgId: m[1]!, userId: m[2]! } : null;
 }
 
-/** Build an OAuthAppConfig from environment variables. */
-export function loadOAuthAppFromEnv(loginUrlOverride?: string): OAuthAppConfig {
-  const clientId = process.env.SF_ECA_CLIENT_ID;
-  const clientSecret = process.env.SF_ECA_CLIENT_SECRET;
+/**
+ * Resolve an ECA credential for a role. An External Client App's consumer key is
+ * tied to the org it was created in, so each org needs its own app: prefer the
+ * role-scoped var (SF_ECA_SOURCE_* / SF_ECA_TARGET_*) and fall back to the shared
+ * SF_ECA_* for backward-compat / single-org setups.
+ */
+function resolveCredential(
+  role: "source" | "target" | undefined,
+  name: "CLIENT_ID" | "CLIENT_SECRET",
+): string | undefined {
+  if (role) {
+    const scoped = process.env[`SF_ECA_${role.toUpperCase()}_${name}`];
+    if (scoped) return scoped;
+  }
+  return process.env[`SF_ECA_${name}`];
+}
+
+/** Build an OAuthAppConfig from environment variables for the given role. */
+export function loadOAuthAppFromEnv(
+  role?: "source" | "target",
+  loginUrlOverride?: string,
+): OAuthAppConfig {
+  const clientId = resolveCredential(role, "CLIENT_ID");
+  const clientSecret = resolveCredential(role, "CLIENT_SECRET");
   const redirectUri = process.env.SF_OAUTH_REDIRECT_URI;
   if (!clientId || !clientSecret || !redirectUri) {
     throw new Error(
-      "Set SF_ECA_CLIENT_ID, SF_ECA_CLIENT_SECRET, and SF_OAUTH_REDIRECT_URI (External Client App).",
+      `Missing OAuth config for ${role ?? "org"}: set SF_ECA_${role ? role.toUpperCase() + "_" : ""}CLIENT_ID / _CLIENT_SECRET ` +
+        "(or the shared SF_ECA_CLIENT_ID/SECRET) and SF_OAUTH_REDIRECT_URI.",
     );
   }
   return {
