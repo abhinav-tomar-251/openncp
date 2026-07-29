@@ -144,6 +144,10 @@ model StageRun {
   status     StageStatus @default(NOT_STARTED)
   attempt    Int         @default(1)
   stats      Json        @default("{}")
+  /// Analyze only: the org-configuration audit (validation rules, flows, triggers,
+  /// TDTM handlers, workflow/duplicate rules, NPSP settings) as { source, target? }.
+  /// Nullable — populated by the Analyze job; read by GET /projects/:id/analysis.
+  audit      Json?
   error      String?
   approvedBy String?
   approvedAt DateTime?

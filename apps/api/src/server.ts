@@ -9,6 +9,7 @@ import { oauthRoutes } from "./routes/oauth.js";
 import { connectionRoutes } from "./routes/connections.js";
 import { stageRoutes } from "./routes/stages.js";
 import { mappingRoutes } from "./routes/mappings.js";
+import { analysisRoutes } from "./routes/analysis.js";
 
 const PORT = Number(process.env.API_PORT ?? 3001);
 
@@ -67,6 +68,8 @@ async function main(): Promise<void> {
   await app.register(async (a) => stageRoutes(a, boss));
   // Dynamic mapping layer: view/edit the analysis-seeded mappings.
   await app.register(mappingRoutes);
+  // NPSP analysis report (built from captured Analyze metadata).
+  await app.register(analysisRoutes);
 
   await app.listen({ port: PORT, host: "0.0.0.0" });
   app.log.info(`api listening on :${PORT}`);

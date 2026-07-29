@@ -4,6 +4,7 @@ import { QUEUES, canStartStage, canTransition, previousStage, type PgBoss, type 
 import { requireAuth } from "../auth.js";
 import { getOwnedProject } from "../lib/ownership.js";
 import { getLatestStatusByStage } from "../lib/stageStatus.js";
+import { buildTargetReadiness } from "../lib/analysisReport.js";
 
 /**
  * Stage control routes. The api creates a stage_run and enqueues a planner; the
@@ -107,8 +108,14 @@ export async function stageRoutes(app: FastifyInstance, boss: PgBoss): Promise<v
     // the browser fetches — the full data stays in the database, queryable
     // (e.g. via the object_run.checkpoint column) whenever it's actually needed.
     if (stage === "analyze") {
+      // The unified target readiness table (mapped + unmapped, joined against the
+      // full inventory) is computed from the same objectRuns before their fields
+      // get stripped below — see buildTargetReadiness in lib/analysisReport.ts.
+      const { targetReadiness, targetSummary } = buildTargetReadiness(stageRun.objectRuns);
       return {
         ...stageRun,
+        targetReadiness,
+        targetSummary,
         objectRuns: stageRun.objectRuns.map((o) => {
           const { fields, ...rest } = (o.checkpoint ?? {}) as Record<string, unknown>;
           const fieldCount = Array.isArray(fields) ? fields.length : undefined;

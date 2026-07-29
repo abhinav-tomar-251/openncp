@@ -12,25 +12,53 @@ import { getOwnedProject } from "../lib/ownership.js";
 export async function mappingRoutes(app: FastifyInstance): Promise<void> {
   app.addHook("preHandler", requireAuth);
 
-  /** All drafted mappings for a project (source object → target + status). */
+  /**
+   * All drafted mappings for a project (source object → target + status), each
+   * annotated with `targetOutcome` — PASS/WARN/MISSING/UNMAPPED/null — from the
+   * latest Analyze run's broadened target-schema check, so the Mapping Editor can
+   * flag "needs attention" rows without a second round trip.
+   */
   app.get("/projects/:id/mappings", async (req, reply) => {
     const { id } = req.params as { id: string };
     if (!(await getOwnedProject(req.userId!, id))) {
       return reply.code(404).send({ error: "project not found" });
     }
-    return prisma.mappingDefinition.findMany({
-      where: { projectId: id },
-      orderBy: [{ enabled: "desc" }, { object: "asc" }],
-      select: {
-        id: true,
-        object: true,
-        target: true,
-        fieldMap: true,
-        enabled: true,
-        confidence: true,
-        autoDrafted: true,
-      },
-    });
+
+    const [rows, analyze] = await Promise.all([
+      prisma.mappingDefinition.findMany({
+        where: { projectId: id },
+        orderBy: [{ enabled: "desc" }, { object: "asc" }],
+        select: {
+          id: true,
+          object: true,
+          target: true,
+          fieldMap: true,
+          enabled: true,
+          confidence: true,
+          autoDrafted: true,
+        },
+      }),
+      prisma.stageRun.findFirst({ where: { projectId: id, stage: "analyze" }, orderBy: { createdAt: "desc" } }),
+    ]);
+
+    const outcomeByTarget = new Map<string, string>();
+    if (analyze) {
+      // Check rows share role="target" with the full inventory rows but are never
+      // "target:"-prefixed — see apps/worker/src/jobs/analyze.ts.
+      const checkRuns = await prisma.objectRun.findMany({
+        where: { stageRunId: analyze.id, role: "target", NOT: { objectApiName: { startsWith: "target:" } } },
+        select: { objectApiName: true, checkpoint: true },
+      });
+      for (const c of checkRuns) {
+        const outcome = (c.checkpoint as { outcome?: string } | null)?.outcome ?? "PASS";
+        outcomeByTarget.set(c.objectApiName, outcome);
+      }
+    }
+
+    return rows.map((r) => ({
+      ...r,
+      targetOutcome: r.target ? (outcomeByTarget.get(r.target) ?? null) : null,
+    }));
   });
 
   /** Edit a single mapping: set its target, field map, and/or enabled flag. */
@@ -54,7 +82,10 @@ export async function mappingRoutes(app: FastifyInstance): Promise<void> {
       return reply.code(400).send({ error: "cannot enable a mapping with no target object" });
     }
 
-    const data: Prisma.MappingDefinitionUpdateInput = {};
+    // Any operator edit marks the row USER-OWNED (autoDrafted=false) so a later
+    // re-run of Analyze preserves it instead of overwriting with a fresh draft.
+    // See docs/sprint_four_planning/04-curation-and-suggestions.md.
+    const data: Prisma.MappingDefinitionUpdateInput = { autoDrafted: false };
     if (body.target !== undefined) data.target = body.target;
     if (body.fieldMap !== undefined) data.fieldMap = body.fieldMap as Prisma.InputJsonValue;
     if (body.enabled !== undefined) data.enabled = body.enabled;

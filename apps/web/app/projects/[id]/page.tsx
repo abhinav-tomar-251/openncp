@@ -5,6 +5,9 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 import { API_BASE, apiGet, apiPost, card, btn } from "../../lib/api";
 import { useSession } from "../../lib/useSession";
+import { AppHeader } from "../../components/AppHeader";
+import { Stepper } from "../../components/Stepper";
+import { StatusPill, OutcomePill } from "../../components/pills";
 
 type Capability = {
   orgId: string | null;
@@ -41,7 +44,7 @@ const ROLES: { role: "source" | "target"; label: string; hint: string }[] = [
 export default function ProjectPage() {
   const params = useParams();
   const id = String(params.id);
-  const { user, loading: sessionLoading } = useSession();
+  const { user, loading: sessionLoading, logout } = useSession();
   const [project, setProject] = useState<Project | null>(null);
   const [banner, setBanner] = useState("");
 
@@ -58,22 +61,24 @@ export default function ProjectPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, user]);
 
-  if (sessionLoading) return <main style={wrap}>Loading…</main>;
+  if (sessionLoading) return <main className="container container-narrow">Loading…</main>;
   if (!user) return null; // redirecting to /login
-  if (!project) return <main style={wrap}>Loading…</main>;
+  if (!project) return <main className="container container-narrow">Loading…</main>;
 
   const byRole = (r: string) => project.connections.find((c) => c.role === r);
 
   return (
-    <main style={wrap}>
-      <Link href="/" style={{ color: "#93c5fd" }}>
-        ← All projects
-      </Link>
-      <h1 style={{ marginBottom: 4 }}>{project.name}</h1>
-      <p style={{ color: "#9aa4c0", marginTop: 0 }}>Stage 1 · Connect &amp; Analyze</p>
-      {banner && (
-        <div style={{ ...card, borderColor: "#22c55e", color: "#86efac" }}>{banner}</div>
-      )}
+    <>
+      <AppHeader user={user} onLogout={() => void logout()} />
+      <main className="container container-narrow fade-in">
+      <Link href="/">← All projects</Link>
+      <h1 style={{ margin: "10px 0 4px" }}>{project.name}</h1>
+      <p className="muted" style={{ marginTop: 0 }}>
+        Migrate this NPSP org into a fresh NPC org. New to this? <Link href="/guide">Read the Guide →</Link>
+      </p>
+      {banner && <div className="banner banner-success">{banner}</div>}
+
+      <Stepper projectId={id} />
 
       {ROLES.map(({ role, label, hint }) => (
         <ConnectCard
@@ -88,6 +93,20 @@ export default function ProjectPage() {
       ))}
 
       <AnalyzePanel projectId={id} enabled={!!byRole("source")} />
+
+      <section style={{ ...card, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div>
+          <strong>Analysis Report</strong>
+          <div style={{ color: "#9aa4c0", fontSize: 13 }}>
+            The full metadata picture of the source NPSP org — object &amp; field dictionary,
+            relationships, record types, validation rules &amp; automations, NPSP config, and
+            migration warnings. Downloadable as Markdown or JSON.
+          </div>
+        </div>
+        <Link href={`/projects/${id}/analysis`} style={{ ...btn, whiteSpace: "nowrap" }}>
+          View report →
+        </Link>
+      </section>
 
       <section style={{ ...card, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <div>
@@ -134,7 +153,8 @@ export default function ProjectPage() {
       />
 
       <ValidatePanel projectId={id} enabled={!!byRole("target")} />
-    </main>
+      </main>
+    </>
   );
 }
 
@@ -263,7 +283,7 @@ function StagePanel({
           <div style={{ margin: "12px 0 6px", color: "#9aa4c0", fontSize: 13 }}>
             {done}/{objects.length} objects complete
           </div>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+          <table className="data">
             <thead>
               <tr style={{ color: "#9aa4c0", textAlign: "left" }}>
                 <th style={{ padding: "4px 6px" }}>Object</th>
@@ -317,22 +337,6 @@ function StatsLine({ stats }: { stats?: { objects?: number; [k: string]: unknown
         </span>
       ))}
     </div>
-  );
-}
-
-function StatusPill({ status }: { status: string }) {
-  const colors: Record<string, [string, string]> = {
-    COMPLETED: ["#14532d", "#86efac"],
-    RUNNING: ["#1e3a5f", "#93c5fd"],
-    PENDING: ["#3f3f46", "#d4d4d8"],
-    PARTIAL: ["#422006", "#fbbf24"],
-    FAILED: ["#3f1d1d", "#fca5a5"],
-  };
-  const [bg, fg] = colors[status] ?? ["#3f3f46", "#d4d4d8"];
-  return (
-    <span style={{ background: bg, color: fg, borderRadius: 999, padding: "2px 8px", fontSize: 12 }}>
-      {status}
-    </span>
   );
 }
 
@@ -445,16 +449,7 @@ function CapabilityView({ role, cap }: { role: "source" | "target"; cap?: Capabi
         {checks
           .filter((c) => c.show)
           .map((c) => (
-            <li
-              key={c.label}
-              style={{
-                fontSize: 12,
-                padding: "3px 8px",
-                borderRadius: 999,
-                background: c.ok ? "#14532d" : "#3f1d1d",
-                color: c.ok ? "#86efac" : "#fca5a5",
-              }}
-            >
+            <li key={c.label} className={`pill ${c.ok ? "pill-success" : "pill-danger"}`}>
               {c.ok ? "✓" : "✗"} {c.label}
             </li>
           ))}
@@ -584,7 +579,7 @@ function ValidatePanel({ projectId, enabled }: { projectId: string; enabled: boo
       {err && <p style={{ color: "#f87171" }}>{err}</p>}
 
       {rows.length > 0 && (
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, marginTop: 12 }}>
+        <table className="data" style={{ marginTop: 12 }}>
           <thead>
             <tr style={{ color: "#9aa4c0", textAlign: "left" }}>
               <th style={{ padding: "4px 6px" }}>Object</th>
@@ -645,17 +640,33 @@ type SourceObjectRow = {
     outcome?: "PASS" | "WARN" | "MISSING";
   };
 };
+type MappedByEntry = { source: string; enabled: boolean; confidence: string };
+type TargetReadinessRow = {
+  object: string;
+  label: string;
+  count: number;
+  fieldCount: number;
+  exists: boolean;
+  missingFields: string[];
+  suggestions: string[];
+  outcome: "PASS" | "WARN" | "MISSING" | "UNMAPPED";
+  mappedBy: MappedByEntry[];
+};
+type TargetSummary = { total: number; mapped: number; unmapped: number; issuesEnabled: number; issuesUnreviewed: number };
 type AnalyzeStage = {
   status: string;
   stats?: {
     sourceObjects?: number;
     sourceWithData?: number;
     targetChecked?: number;
-    targetIssues?: number;
+    targetIssuesEnabled?: number;
+    targetIssuesUnreviewed?: number;
     targetObjectsFound?: number;
     targetWithData?: number;
   };
   objectRuns: SourceObjectRow[];
+  targetReadiness?: TargetReadinessRow[];
+  targetSummary?: TargetSummary;
 };
 
 /**
@@ -667,6 +678,8 @@ function AnalyzePanel({ projectId, enabled }: { projectId: string; enabled: bool
   const [data, setData] = useState<AnalyzeStage | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const [targetFilter, setTargetFilter] = useState("");
+  const [needsAttentionOnly, setNeedsAttentionOnly] = useState(false);
 
   async function refresh() {
     try {
@@ -713,17 +726,22 @@ function AnalyzePanel({ projectId, enabled }: { projectId: string; enabled: bool
   }
 
   const sourceRows = (data?.objectRuns ?? []).filter((o) => o.role === "source");
-  // Target rows come in two shapes sharing role="target": the narrow schema check
-  // (against objects our mappings actually reference) and the full org inventory
-  // (prefixed "target:" to keep them unambiguous from the schema-check rows even
-  // when they name the same object, e.g. both may list "Account").
-  const targetCheckRows = (data?.objectRuns ?? []).filter(
-    (o) => o.role === "target" && !o.objectApiName.startsWith("target:"),
-  );
-  const targetInventoryRows = (data?.objectRuns ?? []).filter((o) =>
-    o.objectApiName.startsWith("target:"),
-  );
   const awaitingReview = data?.status === "AWAITING_REVIEW";
+
+  // Unified Target Org Readiness: every target object (mapped or not), joined and
+  // pre-sorted server-side (enabled-issues -> unreviewed-issues -> healthy -> unused).
+  // See buildTargetReadiness in apps/api/src/lib/analysisReport.ts.
+  const targetRows = data?.targetReadiness ?? [];
+  const tq = targetFilter.trim().toLowerCase();
+  const filteredTargetRows = targetRows.filter((t) => {
+    if (needsAttentionOnly && t.outcome !== "WARN" && t.outcome !== "MISSING") return false;
+    if (!tq) return true;
+    return (
+      t.object.toLowerCase().includes(tq) ||
+      t.label.toLowerCase().includes(tq) ||
+      t.mappedBy.some((m) => m.source.toLowerCase().includes(tq))
+    );
+  });
 
   return (
     <section style={card}>
@@ -759,7 +777,7 @@ function AnalyzePanel({ projectId, enabled }: { projectId: string; enabled: bool
             records)
           </div>
           <div style={{ maxHeight: 320, overflowY: "auto", border: "1px solid #283157", borderRadius: 8 }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+            <table className="data">
               <thead>
                 <tr style={{ color: "#9aa4c0", textAlign: "left", position: "sticky", top: 0, background: "#151b33" }}>
                   <th style={{ padding: "4px 6px" }}>Object</th>
@@ -794,133 +812,93 @@ function AnalyzePanel({ projectId, enabled }: { projectId: string; enabled: bool
         </>
       )}
 
-      {targetCheckRows.length > 0 && (
+      {targetRows.length > 0 && data?.targetSummary && (
         <>
           <div style={{ margin: "16px 0 6px", color: "#9aa4c0", fontSize: 13 }}>
-            Target schema check: {data?.stats?.targetChecked ?? targetCheckRows.length} objects,{" "}
-            {data?.stats?.targetIssues ?? 0} issue(s)
+            Target org readiness: {data.targetSummary.total} objects · {data.targetSummary.mapped} mapped
+            ({data.targetSummary.unmapped} unused) ·{" "}
+            <span style={{ color: data.targetSummary.issuesEnabled > 0 ? "#fca5a5" : "#9aa4c0" }}>
+              {data.targetSummary.issuesEnabled} issue(s) in enabled mappings
+            </span>
+            , {data.targetSummary.issuesUnreviewed} in unreviewed drafts
           </div>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-            <thead>
-              <tr style={{ color: "#9aa4c0", textAlign: "left" }}>
-                <th style={{ padding: "4px 6px" }}>Object</th>
-                <th style={{ padding: "4px 6px" }}>Outcome</th>
-                <th style={{ padding: "4px 6px" }}>Missing fields / suggestions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {targetCheckRows.map((o) => (
-                <tr key={o.id} style={{ borderTop: "1px solid #283157" }}>
-                  <td style={{ padding: "4px 6px" }}>
-                    <code>{o.objectApiName}</code>
-                  </td>
-                  <td style={{ padding: "4px 6px" }}>
-                    <OutcomePill
-                      outcome={
-                        o.checkpoint?.outcome === "MISSING"
-                          ? "FAIL"
-                          : o.checkpoint?.outcome === "WARN"
-                            ? "PARTIAL"
-                            : "PASS"
-                      }
-                    />
-                    {o.checkpoint?.outcome === "MISSING" && (
-                      <span style={{ color: "#9aa4c0", marginLeft: 6 }}>object not found in target</span>
-                    )}
-                  </td>
-                  <td style={{ padding: "4px 6px", color: "#9aa4c0" }}>
-                    {o.checkpoint?.outcome === "MISSING" ? (
-                      o.checkpoint?.suggestionDetails?.length ? (
-                        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                          {o.checkpoint.suggestionDetails.map((s) => (
-                            <div key={s.name}>
-                              <code style={{ color: "#e6e9f2" }}>{s.name}</code>
-                              {s.fields.length > 0 && (
-                                <div
-                                  style={{
-                                    maxHeight: 70,
-                                    overflowY: "auto",
-                                    marginTop: 2,
-                                    fontSize: 12,
-                                  }}
-                                >
-                                  {s.fields.join(", ")}
-                                </div>
-                              )}
-                            </div>
-                          ))}
-                        </div>
-                      ) : (
-                        "no similarly-named objects found"
-                      )
-                    ) : (
-                      o.checkpoint?.missingFields?.join(", ") || "—"
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </>
-      )}
-
-      {targetInventoryRows.length > 0 && (
-        <>
-          <div style={{ margin: "16px 0 6px", color: "#9aa4c0", fontSize: 13 }}>
-            Target objects available: {data?.stats?.targetObjectsFound ?? targetInventoryRows.length} (
-            {data?.stats?.targetWithData ?? targetInventoryRows.filter((r) => r.processedCount > 0).length}{" "}
-            with records) — full inventory of the NPC org, for browsing/future mapping work.
+          <div className="toolbar" style={{ margin: "8px 0" }}>
+            <input
+              className="input"
+              style={{ flex: 1 }}
+              placeholder="Filter target objects…"
+              value={targetFilter}
+              onChange={(e) => setTargetFilter(e.target.value)}
+            />
+            <label className="check">
+              <input
+                type="checkbox"
+                checked={needsAttentionOnly}
+                onChange={(e) => setNeedsAttentionOnly(e.target.checked)}
+              />
+              needs attention only
+            </label>
           </div>
-          <div style={{ maxHeight: 320, overflowY: "auto", border: "1px solid #283157", borderRadius: 8 }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+          <div className="table-wrap scroll-y">
+            <table className="data">
               <thead>
-                <tr style={{ color: "#9aa4c0", textAlign: "left", position: "sticky", top: 0, background: "#151b33" }}>
-                  <th style={{ padding: "4px 6px" }}>Object</th>
-                  <th style={{ padding: "4px 6px" }}>Type</th>
-                  <th style={{ padding: "4px 6px", textAlign: "right" }}>Records</th>
-                  <th style={{ padding: "4px 6px", textAlign: "right" }}>Fields</th>
+                <tr>
+                  <th>Object</th>
+                  <th>Mapped from</th>
+                  <th>Outcome</th>
+                  <th className="num">Records</th>
+                  <th className="num">Fields</th>
+                  <th>Detail</th>
                 </tr>
               </thead>
               <tbody>
-                {targetInventoryRows.map((o) => (
-                  <tr key={o.id} style={{ borderTop: "1px solid #283157" }}>
-                    <td style={{ padding: "4px 6px" }}>
-                      <code>{o.objectApiName.replace(/^target:/, "")}</code>
-                      {o.checkpoint?.label && (
-                        <span style={{ color: "#9aa4c0" }}> — {o.checkpoint.label}</span>
+                {filteredTargetRows.map((t) => (
+                  <tr key={t.object}>
+                    <td>
+                      <code>{t.object}</code>
+                      {t.label && t.label !== t.object && <div className="sub">{t.label}</div>}
+                    </td>
+                    <td>
+                      {t.mappedBy.length ? (
+                        t.mappedBy.map((m) => (
+                          <div key={m.source}>
+                            <code>{m.source}</code>
+                            {!m.enabled && <span className="pill pill-neutral" style={{ marginLeft: 4 }}>disabled</span>}
+                          </div>
+                        ))
+                      ) : (
+                        <span className="faint">—</span>
                       )}
                     </td>
-                    <td style={{ padding: "4px 6px", color: "#9aa4c0" }}>
-                      {o.checkpoint?.custom ? "custom" : "standard"}
+                    <td>
+                      <OutcomePill outcome={t.outcome} />
                     </td>
-                    <td style={{ padding: "4px 6px", textAlign: "right" }}>
-                      {o.processedCount.toLocaleString()}
-                    </td>
-                    <td style={{ padding: "4px 6px", textAlign: "right", color: "#9aa4c0" }}>
-                      {o.checkpoint?.fieldCount ?? "—"}
+                    <td className="num">{t.count.toLocaleString()}</td>
+                    <td className="num">{t.fieldCount}</td>
+                    <td className="muted">
+                      {!t.exists
+                        ? t.suggestions.length
+                          ? `suggestions: ${t.suggestions.join(", ")}`
+                          : "no similarly-named objects found"
+                        : t.missingFields.length
+                          ? `missing: ${t.missingFields.join(", ")}`
+                          : "—"}
                     </td>
                   </tr>
                 ))}
+                {filteredTargetRows.length === 0 && (
+                  <tr>
+                    <td colSpan={6}>
+                      <div className="empty">No target objects match.</div>
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
         </>
       )}
     </section>
-  );
-}
-
-function OutcomePill({ outcome }: { outcome: string }) {
-  const colors: Record<string, [string, string]> = {
-    PASS: ["#14532d", "#86efac"],
-    PARTIAL: ["#422006", "#fbbf24"],
-    FAIL: ["#3f1d1d", "#fca5a5"],
-  };
-  const [bg, fg] = colors[outcome] ?? colors.FAIL!;
-  return (
-    <span style={{ background: bg, color: fg, borderRadius: 999, padding: "2px 8px", fontSize: 12 }}>
-      {outcome}
-    </span>
   );
 }
 
@@ -1001,4 +979,3 @@ function PrepareTarget({
 
 type PrepResult = { object: string; field: string; outcome: string; message?: string };
 
-const wrap: React.CSSProperties = { maxWidth: 760, margin: "0 auto", padding: "48px 24px" };

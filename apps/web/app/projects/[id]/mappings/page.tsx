@@ -3,8 +3,11 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { apiGet, apiPatch, card, btn, input } from "../../../lib/api";
+import { apiGet, apiPatch } from "../../../lib/api";
 import { useSession } from "../../../lib/useSession";
+import { AppHeader } from "../../../components/AppHeader";
+import { ConfidencePill, OutcomePill } from "../../../components/pills";
+import { BookIcon } from "../../../components/icons";
 
 type Mapping = {
   id: string;
@@ -14,6 +17,8 @@ type Mapping = {
   enabled: boolean;
   confidence: string | null;
   autoDrafted: boolean;
+  /** Target-schema readiness from the latest Analyze run — PASS/WARN/MISSING/UNMAPPED/null. */
+  targetOutcome: string | null;
 };
 type FieldMeta = { name: string; label: string; type: string };
 type MappingSchema = {
@@ -26,12 +31,13 @@ type FieldRow = { source: string; target: string };
 export default function MappingsPage() {
   const params = useParams();
   const id = String(params.id);
-  const { user, loading: sessionLoading } = useSession();
+  const { user, loading: sessionLoading, logout } = useSession();
 
   const [mappings, setMappings] = useState<Mapping[] | null>(null);
   const [projectName, setProjectName] = useState("");
   const [filter, setFilter] = useState("");
   const [onlyEnabled, setOnlyEnabled] = useState(false);
+  const [needsAttentionOnly, setNeedsAttentionOnly] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [err, setErr] = useState("");
 
@@ -63,75 +69,93 @@ export default function MappingsPage() {
     }
   }
 
-  if (sessionLoading) return <main style={wrap}>Loading…</main>;
+  if (sessionLoading) return <main className="container"><p className="muted">Loading…</p></main>;
   if (!user) return null;
-  if (!mappings) return <main style={wrap}>{err ? <p style={errStyle}>{err}</p> : "Loading mappings…"}</main>;
+  if (!mappings)
+    return (
+      <>
+        <AppHeader user={user} onLogout={() => void logout()} />
+        <main className="container fade-in">
+          {err ? <div className="banner banner-danger">{err}</div> : <p className="muted">Loading mappings…</p>}
+        </main>
+      </>
+    );
 
   const q = filter.trim().toLowerCase();
   const rows = mappings.filter((m) => {
     if (onlyEnabled && !m.enabled) return false;
+    if (needsAttentionOnly && m.targetOutcome !== "WARN" && m.targetOutcome !== "MISSING") return false;
     if (!q) return true;
     return m.object.toLowerCase().includes(q) || (m.target ?? "").toLowerCase().includes(q);
   });
   const enabledCount = mappings.filter((m) => m.enabled).length;
+  const needsAttentionCount = mappings.filter((m) => m.targetOutcome === "WARN" || m.targetOutcome === "MISSING").length;
 
   return (
-    <main style={wrap}>
-      <Link href={`/projects/${id}`} style={{ color: "#93c5fd" }}>
-        ← Back to project
-      </Link>
-      <h1 style={{ marginBottom: 4 }}>Mapping Editor — {projectName}</h1>
-      <p style={{ color: "#9aa4c0", marginTop: 0 }}>
-        {mappings.length} mappings drafted · {enabledCount} enabled. Enabled mappings run in
-        Transform/Load; heuristic drafts start disabled — review a target &amp; fields, then enable.
+    <>
+      <AppHeader user={user} onLogout={() => void logout()} />
+      <main className="container fade-in">
+      <Link href={`/projects/${id}`}>← Back to project</Link>
+      <h1 style={{ margin: "10px 0 4px" }}>Mapping Editor</h1>
+      <p className="muted" style={{ marginTop: 0 }}>
+        {projectName} · {mappings.length} mappings drafted · {enabledCount} enabled. Enabled mappings run
+        in Transform/Load; heuristic drafts start disabled — review a target &amp; fields, then enable.
       </p>
-      {err && <p style={errStyle}>{err}</p>}
+      {err && <div className="banner banner-danger" style={{ margin: "12px 0" }}>{err}</div>}
 
-      <div style={{ display: "flex", gap: 12, alignItems: "center", margin: "12px 0" }}>
+      <Link href="/guide#mapping" className="callout" style={{ textDecoration: "none", margin: "10px 0" }}>
+        <BookIcon size={16} />
+        <span>
+          Unsure what a heuristic guess means, or why Payments/Recurring Donations/Allocations need
+          special review? See the Guide&apos;s <strong>Review the Mapping</strong> section.
+        </span>
+      </Link>
+
+      <div className="toolbar" style={{ margin: "14px 0" }}>
         <input
-          style={{ ...input, flex: 1 }}
+          className="input"
+          style={{ flex: 1 }}
           placeholder="Filter by source or target object…"
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
         />
-        <label style={{ color: "#9aa4c0", fontSize: 13 }}>
-          <input
-            type="checkbox"
-            checked={onlyEnabled}
-            onChange={(e) => setOnlyEnabled(e.target.checked)}
-          />{" "}
+        <label className="check">
+          <input type="checkbox" checked={onlyEnabled} onChange={(e) => setOnlyEnabled(e.target.checked)} />
           enabled only
+        </label>
+        <label className="check">
+          <input type="checkbox" checked={needsAttentionOnly} onChange={(e) => setNeedsAttentionOnly(e.target.checked)} />
+          needs attention only ({needsAttentionCount})
         </label>
       </div>
 
-      <div style={{ ...card, padding: 0, overflow: "hidden" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+      <div className="table-wrap">
+        <table className="data">
           <thead>
-            <tr style={{ color: "#9aa4c0", textAlign: "left" }}>
-              <th style={th}>Source object</th>
-              <th style={th}>→ Target object</th>
-              <th style={th}>Confidence</th>
-              <th style={{ ...th, textAlign: "right" }}>Fields</th>
-              <th style={{ ...th, textAlign: "center" }}>Enabled</th>
-              <th style={th} />
+            <tr>
+              <th>Source object</th>
+              <th>→ Target object</th>
+              <th>Confidence</th>
+              <th className="num">Fields</th>
+              <th style={{ textAlign: "center" }}>Enabled</th>
+              <th className="shrink" />
             </tr>
           </thead>
           <tbody>
             {rows.map((m) => (
-              <tr key={m.id} style={{ borderTop: "1px solid #283157" }}>
-                <td style={td}>
-                  <code>{m.object}</code>
-                </td>
-                <td style={td}>
-                  {m.target ? <code>{m.target}</code> : <span style={{ color: "#fca5a5" }}>— unmapped —</span>}
-                </td>
-                <td style={td}>
+              <tr key={m.id}>
+                <td><code>{m.object}</code></td>
+                <td>{m.target ? <code>{m.target}</code> : <span className="pill pill-danger">unmapped</span>}</td>
+                <td>
                   <ConfidencePill confidence={m.confidence} />
+                  {(m.targetOutcome === "WARN" || m.targetOutcome === "MISSING") && (
+                    <span style={{ marginLeft: 6 }}>
+                      <OutcomePill outcome={m.targetOutcome} />
+                    </span>
+                  )}
                 </td>
-                <td style={{ ...td, textAlign: "right", color: "#9aa4c0" }}>
-                  {Object.keys(m.fieldMap ?? {}).length}
-                </td>
-                <td style={{ ...td, textAlign: "center" }}>
+                <td className="num">{Object.keys(m.fieldMap ?? {}).length}</td>
+                <td style={{ textAlign: "center" }}>
                   <input
                     type="checkbox"
                     checked={m.enabled}
@@ -140,11 +164,8 @@ export default function MappingsPage() {
                     onChange={() => void toggleEnabled(m)}
                   />
                 </td>
-                <td style={{ ...td, textAlign: "right" }}>
-                  <button
-                    style={{ ...btn, background: "#334155", padding: "2px 10px" }}
-                    onClick={() => setEditingId(editingId === m.id ? null : m.id)}
-                  >
+                <td className="shrink">
+                  <button className="btn btn-secondary btn-sm" onClick={() => setEditingId(editingId === m.id ? null : m.id)}>
                     {editingId === m.id ? "Close" : "Edit"}
                   </button>
                 </td>
@@ -152,8 +173,8 @@ export default function MappingsPage() {
             ))}
             {rows.length === 0 && (
               <tr>
-                <td style={{ ...td, color: "#9aa4c0" }} colSpan={6}>
-                  No mappings match. Run Analyze (with both orgs connected) to draft mappings.
+                <td colSpan={6}>
+                  <div className="empty">No mappings match. Run Analyze (with both orgs connected) to draft mappings.</div>
                 </td>
               </tr>
             )}
@@ -169,7 +190,8 @@ export default function MappingsPage() {
           onClose={() => setEditingId(null)}
         />
       )}
-    </main>
+      </main>
+    </>
   );
 }
 
@@ -245,29 +267,26 @@ function MappingEditor({
   const targetSet = !!mapping.target;
 
   return (
-    <section style={{ ...card, borderColor: "#3b82f6" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <strong>
-          Editing <code>{mapping.object}</code>
-        </strong>
-        <button style={{ ...btn, background: "#334155", padding: "2px 10px" }} onClick={onClose}>
-          Close
-        </button>
+    <section className="card card-accent">
+      <div className="card-hd">
+        <strong>Editing <code>{mapping.object}</code></strong>
+        <button className="btn btn-secondary btn-sm" onClick={onClose}>Close</button>
       </div>
-      {err && <p style={errStyle}>{err}</p>}
-      {note && <p style={{ color: "#86efac", fontSize: 13 }}>{note}</p>}
-      {!schema && <p style={{ color: "#9aa4c0" }}>Loading schema…</p>}
+      {err && <div className="banner banner-danger" style={{ marginTop: 8 }}>{err}</div>}
+      {note && <div className="banner banner-success" style={{ marginTop: 8 }}>{note}</div>}
+      {!schema && <p className="muted">Loading schema…</p>}
 
       {schema && (
         <>
           {/* 1. Target object */}
-          <div style={{ marginTop: 8 }}>
-            <div style={{ fontSize: 13, color: "#9aa4c0", marginBottom: 4 }}>
-              1. Target NPC object ({schema.targetObjects.length} available)
+          <div style={{ marginTop: 12 }}>
+            <div className="muted" style={{ marginBottom: 6, fontWeight: 600, color: "#c7cff0" }}>
+              1 · Target NPC object <span className="faint">({schema.targetObjects.length} available)</span>
             </div>
-            <div style={{ display: "flex", gap: 8 }}>
+            <div className="toolbar">
               <input
-                style={{ ...input, flex: 1 }}
+                className="input"
+                style={{ flex: 1 }}
                 list="target-objects"
                 placeholder="Type to search target objects…"
                 value={targetInput}
@@ -275,97 +294,66 @@ function MappingEditor({
               />
               <datalist id="target-objects">
                 {schema.targetObjects.map((t) => (
-                  <option key={t.name} value={t.name}>
-                    {t.label}
-                  </option>
+                  <option key={t.name} value={t.name}>{t.label}</option>
                 ))}
               </datalist>
-              <button style={btn} onClick={() => void setTarget()} disabled={busy}>
-                Set target
-              </button>
+              <button className="btn" onClick={() => void setTarget()} disabled={busy}>Set target</button>
             </div>
           </div>
 
           {/* 2. Field map */}
-          <div style={{ marginTop: 16 }}>
-            <div style={{ fontSize: 13, color: "#9aa4c0", marginBottom: 4 }}>
-              2. Field mapping{" "}
+          <div style={{ marginTop: 18 }}>
+            <div className="muted" style={{ marginBottom: 6, fontWeight: 600, color: "#c7cff0" }}>
+              2 · Field mapping{" "}
               {mapping.target ? (
-                <>
-                  (<code>{mapping.object}</code> → <code>{mapping.target}</code>)
-                </>
+                <span className="faint">(<code>{mapping.object}</code> → <code>{mapping.target}</code>)</span>
               ) : (
-                <span style={{ color: "#fca5a5" }}>— set a target object first —</span>
+                <span className="pill pill-danger" style={{ marginLeft: 4 }}>set a target object first</span>
               )}
             </div>
 
             {targetSet && (
               <>
-                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-                  <thead>
-                    <tr style={{ color: "#9aa4c0", textAlign: "left" }}>
-                      <th style={th}>Source field</th>
-                      <th style={th}>→ Target field</th>
-                      <th style={th} />
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {rows.map((r, i) => (
-                      <tr key={i} style={{ borderTop: "1px solid #283157" }}>
-                        <td style={td}>
-                          <select
-                            style={{ ...input, width: "100%" }}
-                            value={r.source}
-                            onChange={(e) =>
-                              setRows(rows.map((x, j) => (j === i ? { ...x, source: e.target.value } : x)))
-                            }
-                          >
-                            <option value="">—</option>
-                            {sourceFields.map((f) => (
-                              <option key={f.name} value={f.name}>
-                                {f.name} ({f.type})
-                              </option>
-                            ))}
-                          </select>
-                        </td>
-                        <td style={td}>
-                          <select
-                            style={{ ...input, width: "100%" }}
-                            value={r.target}
-                            onChange={(e) =>
-                              setRows(rows.map((x, j) => (j === i ? { ...x, target: e.target.value } : x)))
-                            }
-                          >
-                            <option value="">—</option>
-                            {targetFields.map((f) => (
-                              <option key={f.name} value={f.name}>
-                                {f.name} ({f.type})
-                              </option>
-                            ))}
-                          </select>
-                        </td>
-                        <td style={{ ...td, textAlign: "right" }}>
-                          <button
-                            style={{ ...btn, background: "#3f1d1d", color: "#fca5a5", padding: "2px 8px" }}
-                            onClick={() => setRows(rows.filter((_, j) => j !== i))}
-                          >
-                            ✕
-                          </button>
-                        </td>
+                <div className="table-wrap">
+                  <table className="data">
+                    <thead>
+                      <tr>
+                        <th>Source field</th>
+                        <th>→ Target field</th>
+                        <th className="shrink" />
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-                <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-                  <button
-                    style={{ ...btn, background: "#334155" }}
-                    onClick={() => setRows([...rows, { source: "", target: "" }])}
-                  >
-                    + Add field
-                  </button>
-                  <button style={btn} onClick={() => void saveFieldMap()} disabled={busy}>
-                    {busy ? "Saving…" : "Save field map"}
-                  </button>
+                    </thead>
+                    <tbody>
+                      {rows.map((r, i) => (
+                        <tr key={i}>
+                          <td>
+                            <select className="input" value={r.source}
+                              onChange={(e) => setRows(rows.map((x, j) => (j === i ? { ...x, source: e.target.value } : x)))}>
+                              <option value="">—</option>
+                              {sourceFields.map((f) => <option key={f.name} value={f.name}>{f.name} ({f.type})</option>)}
+                            </select>
+                          </td>
+                          <td>
+                            <select className="input" value={r.target}
+                              onChange={(e) => setRows(rows.map((x, j) => (j === i ? { ...x, target: e.target.value } : x)))}>
+                              <option value="">—</option>
+                              {targetFields.map((f) => <option key={f.name} value={f.name}>{f.name} ({f.type})</option>)}
+                            </select>
+                          </td>
+                          <td className="shrink">
+                            <button className="btn btn-danger btn-sm" onClick={() => setRows(rows.filter((_, j) => j !== i))}>✕</button>
+                          </td>
+                        </tr>
+                      ))}
+                      {rows.length === 0 && (
+                        <tr><td colSpan={3}><div className="empty">No field mappings yet — add one below.</div></td></tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="toolbar" style={{ marginTop: 10 }}>
+                  <button className="btn btn-secondary" onClick={() => setRows([...rows, { source: "", target: "" }])}>+ Add field</button>
+                  <button className="btn" onClick={() => void saveFieldMap()} disabled={busy}>{busy ? "Saving…" : "Save field map"}</button>
                 </div>
               </>
             )}
@@ -375,22 +363,3 @@ function MappingEditor({
     </section>
   );
 }
-
-function ConfidencePill({ confidence }: { confidence: string | null }) {
-  const colors: Record<string, [string, string]> = {
-    curated: ["#14532d", "#86efac"],
-    heuristic: ["#1e3a5f", "#93c5fd"],
-    unmapped: ["#3f1d1d", "#fca5a5"],
-  };
-  const [bg, fg] = colors[confidence ?? "unmapped"] ?? colors.unmapped!;
-  return (
-    <span style={{ background: bg, color: fg, borderRadius: 999, padding: "2px 8px", fontSize: 12 }}>
-      {confidence ?? "manual"}
-    </span>
-  );
-}
-
-const wrap: React.CSSProperties = { maxWidth: 900, margin: "0 auto", padding: "48px 24px" };
-const th: React.CSSProperties = { padding: "6px 8px" };
-const td: React.CSSProperties = { padding: "6px 8px" };
-const errStyle: React.CSSProperties = { color: "#f87171" };

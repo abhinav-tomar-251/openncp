@@ -49,29 +49,76 @@ export async function apiPatch<T>(path: string, body: unknown): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+/** Fetch a file (with the session cookie) and trigger a browser download. */
+export async function downloadFile(path: string, filename: string): Promise<void> {
+  const res = await fetch(`${API_BASE}${path}`, { credentials: "include" });
+  if (!res.ok) throw new ApiError(res.status, `GET ${path} → ${res.status}`);
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+// These objects mirror the .card/.btn/.input classes in globals.css (via CSS
+// custom properties) so inline-styled components stay visually consistent with
+// the class-based pages. Prefer the className in new code; these remain for the
+// many existing components that use `style={card}` etc.
 export const card: React.CSSProperties = {
-  background: "#151b33",
-  border: "1px solid #283157",
-  borderRadius: 10,
-  padding: 16,
-  margin: "12px 0",
+  background: "var(--surface)",
+  border: "1px solid var(--border-soft)",
+  borderRadius: 12,
+  padding: 18,
+  margin: "14px 0",
+  boxShadow: "var(--shadow)",
 };
 
 export const btn: React.CSSProperties = {
-  background: "#3b82f6",
-  color: "white",
-  border: "none",
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 6,
+  background: "var(--accent)",
+  color: "#fff",
+  border: "1px solid transparent",
   borderRadius: 8,
   padding: "8px 14px",
+  fontSize: 13,
+  fontWeight: 600,
   cursor: "pointer",
   textDecoration: "none",
-  display: "inline-block",
+  whiteSpace: "nowrap",
+};
+
+export const btnSecondary: React.CSSProperties = {
+  ...btn,
+  background: "#232d4d",
+  color: "#ccd5f2",
+  border: "1px solid var(--border)",
+};
+
+export const btnGhost: React.CSSProperties = {
+  ...btn,
+  background: "transparent",
+  color: "var(--muted)",
+  border: "1px solid var(--border)",
+};
+
+export const btnDanger: React.CSSProperties = {
+  ...btn,
+  background: "var(--danger-bg)",
+  color: "var(--danger-fg)",
+  border: "1px solid rgba(239,68,68,0.32)",
 };
 
 export const input: React.CSSProperties = {
-  background: "#0b1020",
-  color: "#e6e9f2",
-  border: "1px solid #283157",
+  background: "#0c1226",
+  color: "var(--text)",
+  border: "1px solid var(--border)",
   borderRadius: 8,
-  padding: "8px 10px",
+  padding: "8px 11px",
+  fontSize: 13,
 };

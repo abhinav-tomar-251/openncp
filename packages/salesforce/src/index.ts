@@ -16,5 +16,6 @@ export * from "./bulk2.js";
 export * from "./catalog.js";
 export * from "./metadata.js";
 export * from "./discovery.js";
+export * from "./orgAudit.js";
 
 export type OrgRole = "source" | "target";

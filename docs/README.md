@@ -46,6 +46,8 @@ exactly the kind of work that benefits from a transparent, auditable, repeatable
 | 15 | [Repository Structure](15-repository-structure.md) | Monorepo layout and key modules |
 | 16 | [Contributing](16-contributing.md) | How to contribute, add mappings, dev setup |
 | 17 | [Multi-Tenant & Cross-Org OAuth Setup](17-multi-tenant-and-oauth-setup.md) | Distributed OAuth app + multi-tenant architecture (connect any org, many users) |
+| 18 | [Migration Guide for Operators](18-migration-guide-for-operators.md) | **Plain-language, step-by-step walkthrough** for running a migration (no engineering background assumed) — mirrors the in-app Guide |
+| — | [**planning_for_migration/**](planning_for_migration/README.md) | **The evidence-based completeness program**: gap analysis against a real org, the verified NPSP↔NPC object map, engine architecture, and the phased roadmap. Where this folder disagrees with 01–18, **it wins**. |
 
 ---
 

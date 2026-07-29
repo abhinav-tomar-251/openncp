@@ -1,15 +1,35 @@
 import { prisma, type Prisma } from "@opennpc/db";
-import { discoverSourceObjects, discoverTargetSchema, discoverAllObjects } from "@opennpc/salesforce";
+import {
+  discoverSourceObjects,
+  checkTargetSchema,
+  discoverAllObjects,
+  captureOrgConfigAudit,
+  isNpspNamespacedObject,
+  type OrgConfigAudit,
+  type FieldMeta,
+} from "@opennpc/salesforce";
 import {
   targetObjectsFromMappings,
   targetFieldsForObject,
   draftMapping,
   DEFAULT_MAPPINGS,
   type DraftObject,
+  type DraftFieldMeta,
   type MappingDefinition,
 } from "@opennpc/mapping";
 import { getLiveConnection } from "../lib/sfSession.js";
-import { draftToRow } from "../lib/mappings.js";
+import { draftToRow, rowToMappingDefinition } from "../lib/mappings.js";
+
+/** Project the rich captured FieldMeta down to what the heuristic drafter consumes. */
+function toDraftFields(fields: readonly FieldMeta[]): DraftFieldMeta[] {
+  return fields.map((f) => ({
+    name: f.name,
+    label: f.label,
+    type: f.type,
+    required: f.required,
+    picklistValues: f.picklistValues?.map((p) => p.value),
+  }));
+}
 
 /**
  * Analyze stage: discover what each org actually contains before Extract/Transform
@@ -37,13 +57,16 @@ export async function runAnalyzePlan(stageRunId: string): Promise<void> {
       role: "source" as const,
       status: "COMPLETED" as const,
       processedCount: o.count,
-      // Full field metadata is captured here for future mapping work (see the
-      // plan that introduced this) but deliberately stripped from the API
-      // response the web UI fetches — see GET /stages/:stage in stages.ts.
+      // Full metadata is captured here (fields, record types, child relationships)
+      // for the analysis report + mapping work, but stripped from the lightweight
+      // GET /stages/:stage payload — the report reads it via GET /analysis.
       checkpoint: {
         label: o.label,
         custom: o.custom,
+        customSetting: o.customSetting,
         fields: o.fields,
+        recordTypes: o.recordTypes,
+        childRelationships: o.childRelationships,
       } as unknown as Prisma.InputJsonValue,
       startedAt: new Date(),
       finishedAt: new Date(),
@@ -51,11 +74,24 @@ export async function runAnalyzePlan(stageRunId: string): Promise<void> {
   });
   const sourceWithData = sourceObjects.filter((o) => o.count > 0).length;
 
+  // Read-only org-configuration audit of the SOURCE org (validation rules, flows,
+  // Apex/TDTM triggers, workflow/duplicate rules, NPSP settings). Best-effort — a
+  // locked-down Tooling API or non-NPSP org must never fail Analyze.
+  let sourceAudit: OrgConfigAudit | undefined;
+  try {
+    sourceAudit = await captureOrgConfigAudit(sourceConn);
+  } catch (e) {
+    console.warn(`[worker] analyze: source config audit skipped: ${(e as Error).message}`);
+  }
+
   // --- Target org: full inventory + auto-draft the mapping layer (optional —
   // target may not be connected yet; you can't draft NPSP->NPC mappings without
   // the NPC schema) ---
   let targetChecked = 0;
-  let targetIssues = 0;
+  // Split by urgency: issues in mappings already ENABLED block migration now;
+  // issues in still-disabled heuristic drafts are informational until reviewed.
+  let targetIssuesEnabled = 0;
+  let targetIssuesUnreviewed = 0;
   let targetObjectsFound = 0;
   let targetWithData = 0;
   let mappingsDrafted = 0;
@@ -78,6 +114,8 @@ export async function runAnalyzePlan(stageRunId: string): Promise<void> {
           label: o.label,
           custom: o.custom,
           fields: o.fields,
+          recordTypes: o.recordTypes,
+          childRelationships: o.childRelationships,
         } as unknown as Prisma.InputJsonValue,
         startedAt: new Date(),
         finishedAt: new Date(),
@@ -94,18 +132,35 @@ export async function runAnalyzePlan(stageRunId: string): Promise<void> {
     const targetDraftObjects: DraftObject[] = allTargetObjects.map((o) => ({
       name: o.name,
       label: o.label,
-      fields: o.fields.map((fld) => ({ name: fld.name, label: fld.label, type: fld.type })),
+      fields: toDraftFields(o.fields),
     }));
-    const draftSources = sourceObjects.filter((o) => o.count > 0 || o.name in DEFAULT_MAPPINGS);
+
+    // Preserve curation: rows the operator has edited (autoDrafted=false) or approved
+    // are USER-OWNED and must survive re-Analyze. Only auto-drafts are refreshed. See
+    // docs/sprint_four_planning/04-curation-and-suggestions.md.
+    const existingRows = await prisma.mappingDefinition.findMany({ where: { projectId } });
+    const protectedRows = existingRows.filter((m) => m.autoDrafted === false || m.approvedAt !== null);
+    const protectedSources = new Set(protectedRows.map((m) => m.object));
+
+    // What deserves a drafted mapping:
+    //  - anything holding data, or a curated seed, OR an NPSP-namespaced object.
+    //    The NPSP clause matters because sandboxes are routinely scrubbed: a real
+    //    org had npe03__Recurring_Donation__c at 0 records but 157 fields, 10
+    //    validation rules and 4 TDTM handlers — clearly live in production, yet it
+    //    got no mapping row at all under the old `count > 0` gate.
+    //  - never a Custom Setting: those are configuration (one org-default row),
+    //    not migratable data, and they produced ~70% of the drafting noise.
+    const draftSources = sourceObjects.filter((o) => {
+      if (protectedSources.has(o.name)) return false;
+      if (o.customSetting) return false;
+      return o.count > 0 || o.name in DEFAULT_MAPPINGS || isNpspNamespacedObject(o.name);
+    });
     const drafts = draftSources.map((o) =>
-      draftMapping(
-        { name: o.name, label: o.label, fields: o.fields.map((fld) => ({ name: fld.name, label: fld.label, type: fld.type })) },
-        targetDraftObjects,
-      ),
+      draftMapping({ name: o.name, label: o.label, fields: toDraftFields(o.fields) }, targetDraftObjects),
     );
 
-    // Idempotent re-seed: replace this project's mapping rows every Analyze run.
-    await prisma.mappingDefinition.deleteMany({ where: { projectId } });
+    // Delete ONLY auto-drafts, then recreate fresh ones — user-owned rows are untouched.
+    await prisma.mappingDefinition.deleteMany({ where: { projectId, autoDrafted: true } });
     if (drafts.length > 0) {
       await prisma.mappingDefinition.createMany({
         data: drafts.map((d) => draftToRow(projectId, d)),
@@ -113,33 +168,62 @@ export async function runAnalyzePlan(stageRunId: string): Promise<void> {
     }
     mappingsDrafted = drafts.length;
 
-    // The enabled (curated) mappings drive the narrow schema check below.
-    const enabledMappings: Record<string, MappingDefinition> = {};
-    for (const d of drafts) {
-      if (d.enabledByDefault && d.target) {
-        enabledMappings[d.source] = {
-          source: d.source,
-          target: d.target,
-          fieldMap: d.fieldMap,
-          valueMap: d.valueMap,
-          lookups: d.lookups,
-          constants: d.constants,
-          reconcile: d.reconcile,
-        };
-      }
+    // Build the FULL set of mappings that make a claim about a target object —
+    // curated + heuristic, enabled AND still-disabled drafts — so the schema check
+    // below covers every drafted mapping, not just the handful currently enabled.
+    // Track per-mapping enabled/confidence alongside so the check can attribute
+    // "who targets this object" and split issues by urgency (enabled vs unreviewed).
+    type MappedBy = { source: string; enabled: boolean; confidence: string };
+    const allMappingsRecord: Record<string, MappingDefinition> = {};
+    const mappedByTarget = new Map<string, MappedBy[]>();
+    const addMapping = (source: string, target: string, def: MappingDefinition, enabled: boolean, confidence: string) => {
+      allMappingsRecord[source] = def;
+      const list = mappedByTarget.get(target) ?? [];
+      list.push({ source, enabled, confidence });
+      mappedByTarget.set(target, list);
+    };
+    for (const row of protectedRows) {
+      if (!row.target) continue;
+      const def = rowToMappingDefinition(row);
+      if (def) addMapping(row.object, row.target, def, row.enabled, row.confidence ?? "manual");
     }
-    mappingsEnabled = Object.keys(enabledMappings).length;
+    for (const d of drafts) {
+      if (!d.target) continue;
+      const def: MappingDefinition = {
+        source: d.source,
+        target: d.target,
+        fieldMap: d.fieldMap,
+        valueMap: d.valueMap,
+        lookups: d.lookups,
+        constants: d.constants,
+        reconcile: d.reconcile,
+      };
+      addMapping(d.source, d.target, def, d.enabledByDefault, d.confidence);
+    }
+    mappingsEnabled = [...mappedByTarget.values()].flat().filter((m) => m.enabled).length;
 
-    // Narrow check: confirm the ENABLED mappings' target objects exist with the
-    // expected fields (grows/shrinks with what's enabled — no longer a flat 6).
-    const narrowTargets = targetObjectsFromMappings(enabledMappings);
-    const checks = await discoverTargetSchema(targetConn, narrowTargets, (obj) =>
-      targetFieldsForObject(obj, enabledMappings),
+    // Broad, free (in-memory) check: every target object ANY mapping — curated,
+    // heuristic, enabled, or still-disabled — actually claims, confirmed against
+    // the full inventory just fetched above. No extra Salesforce calls: this reuses
+    // allTargetObjects instead of discoverTargetSchema's old per-object describe().
+    // Field-name index of the real target org, so `targetFieldsForObject` only
+    // expects OwnerId/RecordTypeId where those fields actually exist. Without this
+    // every readiness row WARNed with a bogus "missing fields: OwnerId".
+    const targetFieldNames = new Map<string, Set<string>>(
+      allTargetObjects.map((o) => [o.name, new Set(o.fields.map((f) => f.name))]),
+    );
+    const allTargets = targetObjectsFromMappings(allMappingsRecord);
+    const checks = checkTargetSchema(allTargetObjects, allTargets, (obj) =>
+      targetFieldsForObject(obj, allMappingsRecord, targetFieldNames.get(obj)),
     );
     await prisma.objectRun.createMany({
       data: checks.map((c) => {
         const outcome = !c.exists ? "MISSING" : c.missingFields.length > 0 ? "WARN" : "PASS";
-        if (outcome !== "PASS") targetIssues++;
+        const mappedBy = mappedByTarget.get(c.name) ?? [];
+        const isEnabledIssue = outcome !== "PASS" && mappedBy.some((m) => m.enabled);
+        const isUnreviewedIssue = outcome !== "PASS" && !isEnabledIssue;
+        if (isEnabledIssue) targetIssuesEnabled++;
+        if (isUnreviewedIssue) targetIssuesUnreviewed++;
         return {
           stageRunId,
           objectApiName: c.name,
@@ -151,6 +235,7 @@ export async function runAnalyzePlan(stageRunId: string): Promise<void> {
             suggestions: c.suggestions,
             suggestionDetails: c.suggestionDetails,
             outcome,
+            mappedBy,
           } as unknown as Prisma.InputJsonValue,
           startedAt: new Date(),
           finishedAt: new Date(),
@@ -171,12 +256,16 @@ export async function runAnalyzePlan(stageRunId: string): Promise<void> {
         sourceObjects: sourceObjects.length,
         sourceWithData,
         targetChecked,
-        targetIssues,
+        targetIssuesEnabled,
+        targetIssuesUnreviewed,
         targetObjectsFound,
         targetWithData,
         mappingsDrafted,
         mappingsEnabled,
       } as unknown as Prisma.InputJsonValue,
+      // Org-config audit for the analysis report (source only; the blank NPC target
+      // gets a readiness check, not a deep audit). Undefined if capture was skipped.
+      audit: (sourceAudit ? { source: sourceAudit } : undefined) as unknown as Prisma.InputJsonValue,
     },
   });
 
@@ -184,6 +273,7 @@ export async function runAnalyzePlan(stageRunId: string): Promise<void> {
     `[worker] analyze.plan done: ${sourceObjects.length} source objects (${sourceWithData} with data), ` +
       `${targetObjectsFound} target objects found (${targetWithData} with data), ` +
       `${mappingsDrafted} mappings drafted (${mappingsEnabled} enabled), ` +
-      `${targetChecked} enabled-target checks (${targetIssues} issues)`,
+      `${targetChecked} target checks (${targetIssuesEnabled} issues in enabled mappings, ` +
+      `${targetIssuesUnreviewed} in unreviewed drafts)`,
   );
 }

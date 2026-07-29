@@ -13,6 +13,13 @@ relationship.
 > that cannot be resolved at runtime is flagged as a **blocking validation error** before Load — the
 > platform never blindly writes to a guessed field. Mappings ship as editable definition files (see
 > [08-transformation-engine.md](08-transformation-engine.md)), not hardcoded logic.
+>
+> 📌 **This document describes the intended target model, not entirely what is built.** It was written
+> before the build and several object names in it were later found to be wrong against a real NPC org
+> (corrections are marked ⚠️ inline). For the **verified, evidence-based** object map and the honest
+> delivered-vs-planned status, see
+> **[planning_for_migration/01-npsp-npc-object-map.md](planning_for_migration/01-npsp-npc-object-map.md)**.
+> Where the two disagree, that one is correct.
 
 ## 1. The ID re-pointing problem and `id_xref`
 
@@ -51,7 +58,7 @@ NPSP uses the **Household Account model**: each Contact belongs to a Household `
 | NPSP source | → | NPC target | Transform notes |
 |-------------|---|------------|-----------------|
 | `Contact` + its Household `Account` | → | **Person Account** | Merge the Contact and its 1-person Household into a single Person Account. Carry name, birthdate, email, phones, addresses. |
-| `Account` (Household, multi-member) | → | **`PartyRelationshipGroup`** (+ members) | Multi-person households become a relationship group; each member is a Person Account joined via `PartyRelationshipGroupMember`. |
+| `Account` (Household, multi-member) | → | **`PartyRelationshipGroup`** (+ members) | Multi-person households become a relationship group; each member is a Person Account joined via **`PartyRoleRelation`**. ⚠️ There is no `PartyRelationshipGroupMember` object (verified against a real NPC org). |
 | `Account` (Organization / Business) | → | **Business `Account`** | Mostly direct field mapping; record type → NPC business account type. |
 | `npsp__Address__c` | → | Person Account address / `ContactPointAddress` | Address objects become standard address fields or contact points; seasonal/secondary addresses → contact points. |
 
@@ -100,7 +107,7 @@ Field examples (gift):
 
 | NPSP source | → | NPC target | Transform notes |
 |-------------|---|------------|-----------------|
-| `npsp__General_Accounting_Unit__c` (GAU) | → | **`Designation`** | Funds/purposes. Active flag, name, description. |
+| `npsp__General_Accounting_Unit__c` (GAU) | → | **`GiftDesignation`** | Funds/purposes. Active flag, name, description. ⚠️ The NPC object is `GiftDesignation`; a plain `Designation` object does **not** exist (verified against a real NPC org). |
 | `npsp__Allocation__c` | → | **`GiftTransactionDesignation`** (or `GiftDefaultDesignation` for commitments) | Re-point **both** the gift Id and the designation Id via `id_xref`. Percentage vs fixed-amount allocations preserved. |
 
 ### 3.5 Soft credits, tributes, levels
@@ -109,7 +116,7 @@ Field examples (gift):
 |-------------|---|------------|
 | `npsp__Partial_Soft_Credit__c` + soft-credit `OpportunityContactRole` | → | **`GiftSoftCredit`** |
 | Tribute fields (`npsp__In_Honor_Of__c`, `npsp__In_Memory_Of__c`, Tribute object) | → | **`GiftTribute`** |
-| `npsp__Level__c` | → | **`GivingTier`** |
+| `npsp__Level__c` | → | ⚠️ **no NPC equivalent** — `GivingTier` does **not** exist (verified). Decide per project: a custom field on the Person Account, or skip. |
 | `npsp__Engagement_Plan__c` / `npsp__Engagement_Plan_Task__c` | → | Tasks/Activities (or Program tasks if PMM in scope) |
 
 ## 4. Relationships & affiliations
@@ -118,7 +125,7 @@ Field examples (gift):
 |-------------|---|------------|-------|
 | `npe4__Relationship__c` (person↔person) | → | NPC party relationship junction (confirm exact object in Analyze) | Reciprocal pairs deduplicated; relationship type value-mapped. |
 | `npe5__Affiliation__c` (person↔org) | → | `AccountContactRelation` / party affiliation | Role, primary flag, status carried over. |
-| Household membership (multi-member) | → | `PartyRelationshipGroup` + `PartyRelationshipGroupMember` | Built from the Household Account → members. |
+| Household membership (multi-member) | → | `PartyRelationshipGroup` + **`PartyRoleRelation`** | Built from the Household Account → members. |
 
 ## 5. Campaigns & engagement
 
@@ -153,7 +160,7 @@ Parents must exist before children so lookups resolve. The loader (see
 
 ```mermaid
 flowchart TD
-    D[Designation] --> PA[Account / Person Account]
+    D[GiftDesignation] --> PA[Account / Person Account]
     PA --> PRG[PartyRelationshipGroup + members]
     PRG --> REL[Relationships / Affiliations]
     PA --> CMP[Campaign]

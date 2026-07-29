@@ -6,6 +6,8 @@ import {
   draftFieldMap,
   scoreObjectMatch,
   draftMapping,
+  draftValueMap,
+  unmetRequiredTargetFields,
   type DraftObject,
   type DraftFieldMeta,
 } from "./draft.js";
@@ -102,4 +104,59 @@ test("draftMapping: nothing above threshold -> unmapped/null", () => {
   assert.equal(d.target, null);
   assert.equal(d.confidence, "unmapped");
   assert.equal(d.enabledByDefault, false);
+});
+
+// --- Sprint 4: picklist value-map + required-field suggestions ---
+
+test("draftValueMap translates only values that differ but match case-insensitively", () => {
+  const vm = draftValueMap(["In Progress", "Closed Won", "Prospecting"], ["in progress", "Closed Won", "Qualification"]);
+  // "In Progress" -> "in progress" (case differs, target exists); "Closed Won" identical (skip);
+  // "Prospecting" has no target match (skip).
+  assert.deepEqual(vm, { "In Progress": "in progress" });
+});
+
+test("draftValueMap returns empty when all values are identical", () => {
+  assert.deepEqual(draftValueMap(["A", "B"], ["A", "B", "C"]), {});
+});
+
+test("unmetRequiredTargetFields lists required, unmapped, non-auto-provided target fields", () => {
+  const targetFields: DraftFieldMeta[] = [
+    { name: "Name", label: "Name", type: "string", required: true },
+    { name: "Amount", label: "Amount", type: "currency", required: true },
+    { name: "RecordTypeId", label: "Record Type", type: "reference", required: true }, // auto-provided
+    { name: "Description", label: "Description", type: "textarea", required: false },
+  ];
+  const fieldMap = { npsp__Amount__c: "Amount" }; // Amount is covered
+  assert.deepEqual(unmetRequiredTargetFields(targetFields, fieldMap), ["Name"]);
+});
+
+test("draftMapping emits a valueMap for picklist->picklist with differing casing", () => {
+  const src: DraftObject = {
+    name: "Widget__c",
+    label: "Widget",
+    fields: [{ name: "Stage__c", label: "Stage", type: "picklist", picklistValues: ["Open", "Closed Won"] }],
+  };
+  const inventory: DraftObject[] = [
+    { name: "Widget", label: "Widget", fields: [{ name: "Stage__c", label: "Stage", type: "picklist", picklistValues: ["open", "Closed Won"] }] },
+  ];
+  const d = draftMapping(src, inventory, {});
+  assert.equal(d.target, "Widget");
+  assert.equal(d.fieldMap.Stage__c, "Stage__c");
+  assert.deepEqual(d.valueMap, { Stage__c: { Open: "open" } });
+});
+
+test("draftMapping flags an unmapped required target field", () => {
+  const src: DraftObject = { name: "Widget__c", label: "Widget", fields: [{ name: "Name", label: "Name", type: "string" }] };
+  const inventory: DraftObject[] = [
+    {
+      name: "Widget",
+      label: "Widget",
+      fields: [
+        { name: "Name", label: "Name", type: "string", required: true },
+        { name: "Amount", label: "Amount", type: "currency", required: true }, // no source -> unmet
+      ],
+    },
+  ];
+  const d = draftMapping(src, inventory, {});
+  assert.deepEqual(d.unmetRequired, ["Amount"]);
 });

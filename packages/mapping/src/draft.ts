@@ -20,6 +20,10 @@ export interface DraftFieldMeta {
   name: string;
   label: string;
   type: string;
+  /** Effectively required on the target — drives unmapped-required-field warnings. */
+  required?: boolean;
+  /** Picklist option api values — drives value-map suggestions for picklist->picklist. */
+  picklistValues?: string[];
 }
 
 export interface DraftObject {
@@ -41,6 +45,8 @@ export interface MappingDraft {
   confidence: DraftConfidence;
   /** Curated seeds are trusted (enable by default); heuristic/unmapped need review. */
   enabledByDefault: boolean;
+  /** Required target fields left unmapped — advisory, surfaced as report warnings. */
+  unmetRequired?: string[];
 }
 
 /** Managed-package / custom suffixes+prefixes stripped so names compare on their meaning. */
@@ -156,6 +162,68 @@ export function draftFieldMap(
   return map;
 }
 
+/** Target fields the engine fills automatically — never counted as "unmapped required". */
+const AUTO_PROVIDED_TARGET_FIELDS = new Set(["RecordTypeId", "Legacy_NPSP_Id__c"]);
+
+/**
+ * Value translations for a source picklist -> target picklist: emit an entry only
+ * when the value isn't already identical but a case-insensitive match exists on the
+ * target. Keyed by source value (matches the engine's `valueMap[srcField][srcValue]`).
+ * Pure.
+ */
+export function draftValueMap(
+  sourceValues: readonly string[],
+  targetValues: readonly string[],
+): Record<string, string> {
+  const exact = new Set(targetValues);
+  const byLower = new Map(targetValues.map((v) => [v.toLowerCase(), v]));
+  const vm: Record<string, string> = {};
+  for (const sv of sourceValues) {
+    if (exact.has(sv)) continue; // identical value already loads correctly
+    const hit = byLower.get(sv.toLowerCase());
+    if (hit) vm[sv] = hit;
+  }
+  return vm;
+}
+
+/** Build the full valueMap (keyed by SOURCE field) for a drafted field map's picklist pairs. */
+function draftValueMaps(
+  sourceFields: readonly DraftFieldMeta[],
+  targetFields: readonly DraftFieldMeta[],
+  fieldMap: Record<string, string>,
+): Record<string, Record<string, string>> {
+  const srcByName = new Map(sourceFields.map((f) => [f.name, f]));
+  const tgtByName = new Map(targetFields.map((f) => [f.name, f]));
+  const out: Record<string, Record<string, string>> = {};
+  for (const [src, tgt] of Object.entries(fieldMap)) {
+    const sf = srcByName.get(src);
+    const tf = tgtByName.get(tgt);
+    if (sf?.picklistValues?.length && tf?.picklistValues?.length) {
+      const vm = draftValueMap(sf.picklistValues, tf.picklistValues);
+      if (Object.keys(vm).length) out[src] = vm;
+    }
+  }
+  return out;
+}
+
+/** Required target fields that nothing in the field map covers (excludes auto-provided). Pure. */
+export function unmetRequiredTargetFields(
+  targetFields: readonly DraftFieldMeta[],
+  fieldMap: Record<string, string>,
+): string[] {
+  const mapped = new Set(Object.values(fieldMap));
+  return targetFields
+    .filter(
+      (f) =>
+        f.required &&
+        !SKIP_FIELDS.has(f.name) &&
+        !AUTO_PROVIDED_TARGET_FIELDS.has(f.name) &&
+        !mapped.has(f.name),
+    )
+    .map((f) => f.name)
+    .sort();
+}
+
 /** Fraction of source data-fields whose normalized name appears among the target's fields. */
 function fieldNameCoverage(source: DraftObject, target: DraftObject): number {
   const dataFields = source.fields.filter((f) => !SKIP_FIELDS.has(f.name));
@@ -223,11 +291,16 @@ export function draftMapping(
   if (!best) {
     return { source: source.name, target: null, fieldMap: {}, confidence: "unmapped", enabledByDefault: false };
   }
+  const fieldMap = draftFieldMap(source.fields, best.fields);
+  const valueMap = draftValueMaps(source.fields, best.fields, fieldMap);
+  const unmetRequired = unmetRequiredTargetFields(best.fields, fieldMap);
   return {
     source: source.name,
     target: best.name,
-    fieldMap: draftFieldMap(source.fields, best.fields),
+    fieldMap,
+    valueMap: Object.keys(valueMap).length ? valueMap : undefined,
     confidence: "heuristic",
     enabledByDefault: false,
+    unmetRequired: unmetRequired.length ? unmetRequired : undefined,
   };
 }
